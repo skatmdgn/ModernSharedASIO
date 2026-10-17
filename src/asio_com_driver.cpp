@@ -70,9 +70,12 @@ public:
     }
     ASIOBool init(void*) override {
         if(initialized_)return ASIOTrue;
-        HRESULT co=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
-        bool uninit=SUCCEEDED(co);
-        if(FAILED(co)&&co!=RPC_E_CHANGED_MODE)return ASIOFalse;
+        // COM must stay initialized until all dependent interface pointers are released.
+        struct CoGuard {
+            HRESULT hr{CoInitializeEx(nullptr,COINIT_MULTITHREADED)};
+            ~CoGuard(){if(SUCCEEDED(hr))CoUninitialize();}
+        } scope;
+        if(FAILED(scope.hr)&&scope.hr!=RPC_E_CHANGED_MODE)return ASIOFalse;
         ComPtr<IMMDeviceEnumerator> e;
         ComPtr<IMMDevice> dev;
         ComPtr<IAudioClient> client;
@@ -87,7 +90,6 @@ public:
             rate_=fmt->nSamplesPerSec;initialized_=true;
         }
         CoTaskMemFree(fmt);
-        if(uninit)CoUninitialize();
         if(!initialized_)put_text(error_,"Windows shared stereo device unavailable",sizeof(error_));
         return initialized_?ASIOTrue:ASIOFalse;
     }

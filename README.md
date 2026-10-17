@@ -1,20 +1,21 @@
 # ModernSharedASIO
 
-**Status: early development, NOT an ASIO DLL. Do not install in Cubase yet.**
+**Status: Batch 2 experimental ASIO DLL source written — Windows compilation and Cubase 8 tests NOT done. Not ready to install.**
 
-A new Windows x64 ASIO-to-WASAPI shared-mode driver project. Goal: **Cubase 8.0.40 and YouTube playing concurrently** with stable low latency. The previously reverse-engineered `skatmdgn/ASIOGLLD` is an **evidence and compatibility reference**, not proprietary code copied into this repository.
+Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 
-## Batch 1 implemented
+## Implemented in source
 
-- Cross-platform, preallocated SPSC stereo float ring; atomic indices, bounded producer/consumer operations, no allocations or locks in push/pop.
-- Windows shared engine period policy: respect default, min, max, fundamental frames; default unless shorter period explicitly requested.
-- Windows WASAPI shared-only renderer source: IAudioClient3 event-driven stream or fresh IAudioClient shared fallback, MMCSS audio worker, endpoint mix format conversion, stop-join cleanup, underrun/error counters.
-- Windows five-second smoke executable to check simultaneous YouTube audio, silent by default or optional quiet 440Hz tone.
-- Core tests including concurrent two-thread transfer of 200,000 frames.
+- SPSC lock-free stereo Float32 ring, period policy and deterministic core/bridge tests.
+- ASIO Float32 planar output channel mapping into a bounded interleaved FIFO; overflow counted.
+- WASAPI shared-only IAudioClient3 engine with fresh IAudioClient shared fallback, MMCSS and Windows audio event scheduling.
+- Experimental 24-method IASIO 2.3 COM adapter, IClassFactory, own CLSID, explicit registration/unregistration exports, ASIO callback producer, 512-frame double-buffer output.
+- 5-second shared-mode smoke executable and **registry-free COM factory preflight** executable.
+- Corrected COM lifetime ordering and 24 valid bit / 32-bit PCM container conversion.
 
-## Build and tests
+## Build
 
-Portable tests (Windows, Linux, macOS):
+Portable tests:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -22,26 +23,19 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Windows x64 with Visual Studio 2022 / Windows SDK:
+Windows x64 (Visual Studio 2022 + Windows SDK + external official [ASIO SDK](https://github.com/audiosdk/asio)):
 
 ```powershell
-cmake -S . -B build-win -A x64
+cmake -S . -B build-win -A x64 -DMSA_BUILD_ASIO_DLL=ON -DASIO_SDK_DIR=C:/sdk/asio
 cmake --build build-win --config Debug
 ctest --test-dir build-win -C Debug --output-on-failure
-.\build-win\Debug\modern_asio_smoke.exe
-# Optional quiet tone:
-.\build-win\Debug\modern_asio_smoke.exe --tone --period-5ms
+.\build-win\Debug\modern_asio_preflight.exe .\build-win\Debug\ModernSharedASIO.dll
 ```
 
-The diagnostic program opens **shared mode only**. It does not register an ASIO driver. The portable tests passed on Linux in Debug and Release. **The Windows backend has not been compiled or executed on Windows yet.** A successful silence playback alone is not Cubase validation.
+No source or compiled binaries from the ASIO SDK are bundled. Refer to [SDK licensing and compatibility](docs/SDK_COMPATIBILITY.md).
 
 ## Important limitations
 
-- Playback only; stereo source; excess device channels filled with silence.
-- Source rate must match Windows device mix rate. No resampler or recording.
-- Missing audio frames become silence and increment underrun count.
-- Default eConsole output only; no automatic hot-plug recovery or setting persistence.
-- **No COM class factory, IASIO implementation, Cubase DLL or installer yet.**
-- Do not overwrite the Steinberg DLL; original binaries and disassembly are excluded from this repo.
+**Do not register the DLL or use it in Cubase yet**: Windows compilation and host/COM preflight are unverified. The ASIO callback thread currently uses an independent `std::chrono` timer **not locked to the WASAPI audio clock**; long-run timing drift, dropout and excess buffering have not been resolved. Device loss, resampling, actual latency reporting, recording and installer also remain incomplete. Shared mode is the only implemented WASAPI mode; microphone/loopback capture not implemented.
 
-See [architecture](docs/ARCHITECTURE.md), [evidence crosswalk](docs/ORIGINAL_EVIDENCE.md), [roadmap](docs/ROADMAP.md) and [test plan](docs/TEST_PLAN.md).
+See [roadmap](docs/ROADMAP.md), [Batch 2 status](docs/BATCH2_STATUS.md), [architecture](docs/ARCHITECTURE.md), and [original evidence](docs/ORIGINAL_EVIDENCE.md).

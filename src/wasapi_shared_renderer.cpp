@@ -101,9 +101,14 @@ void convert(float const* input, BYTE* dst, UINT32 frames, const FormatDesc& f) 
                 out[1] = static_cast<BYTE>(v >> 8);
                 out[2] = static_cast<BYTE>(v >> 16);
             } else if (f.kind == Kind::pcm32) {
-                const auto v = static_cast<std::int32_t>(std::llround(static_cast<double>(sample) *
-                    (sample < 0 ? 2147483648.0 : 2147483647.0)));
-                std::memcpy(out, &v, sizeof(v));
+                // With 24 valid bits in 32-bit PCM, the low byte is padding.
+                const double neg = f.valid_bits == 24 ? 8388608.0 : 2147483648.0;
+                const double pos = f.valid_bits == 24 ? 8388607.0 : 2147483647.0;
+                const auto raw = std::llround(static_cast<double>(sample) *
+                                              (sample < 0 ? neg : pos));
+                const auto value = static_cast<std::int32_t>(
+                    raw * (f.valid_bits == 24 ? 256LL : 1LL));
+                std::memcpy(out, &value, sizeof(value));
             }
         }
     }
