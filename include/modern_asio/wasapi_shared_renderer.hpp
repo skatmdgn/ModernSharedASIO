@@ -28,6 +28,10 @@ struct OutputStats {
     std::uint64_t render_events{0};
     std::uint64_t underrun_frames{0};
     std::uint64_t errors{0};
+    std::uint64_t clock_reads{0};
+    std::uint64_t clock_device_position{0};
+    std::uint64_t clock_qpc_100ns{0};
+    std::uint64_t clock_frequency{0};
 };
 
 // One owning control thread calls start()/stop(). Audio COM interfaces live only
@@ -71,6 +75,10 @@ private:
     std::atomic<std::uint64_t> render_events_{0};
     std::atomic<std::uint64_t> underrun_frames_{0};
     std::atomic<std::uint64_t> errors_{0};
+    std::atomic<std::uint64_t> clock_reads_{0};
+    std::atomic<std::uint64_t> clock_device_position_{0};
+    std::atomic<std::uint64_t> clock_qpc_100ns_{0};
+    std::atomic<std::uint64_t> clock_frequency_{0};
 };
 } // namespace modern_asio
 #endif

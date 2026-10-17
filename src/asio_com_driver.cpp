@@ -102,8 +102,10 @@ public:
         position_.store(0,std::memory_order_release);
         buffer_index_=0;
         // ASIO host can prefill output half B before start.
-        bridge_.submit(active_[0]?planar_[0][1].data():nullptr,
-                       active_[1]?planar_[1][1].data():nullptr,kFrames);
+        const auto initial=bridge_.submit(active_[0]?planar_[0][1].data():nullptr,
+                                          active_[1]?planar_[1][1].data():nullptr,kFrames);
+        if(initial!=kFrames)return ASE_HWMalfunction;
+        position_.store(kFrames,std::memory_order_release);
         auto hr=render_.start(0);
         if(FAILED(hr)){put_text(error_,"WASAPI shared-mode startup failed",sizeof(error_));return ASE_HWMalfunction;}
         if(render_.device_info().sample_rate!=rate_){

@@ -130,6 +130,10 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     render_events_.store(0);
     underrun_frames_.store(0);
     errors_.store(0);
+    clock_reads_.store(0);
+    clock_device_position_.store(0);
+    clock_qpc_100ns_.store(0);
+    clock_frequency_.store(0);
     try {
         thread_ = std::thread([this, target_period_ms] { thread_main(target_period_ms); });
     } catch (...) {
@@ -161,7 +165,9 @@ OutputInfo WasapiSharedRenderer::device_info() const noexcept {
     return info_;
 }
 OutputStats WasapiSharedRenderer::stats() const noexcept {
-    return {render_events_.load(), underrun_frames_.load(), errors_.load()};
+    return {render_events_.load(), underrun_frames_.load(), errors_.load(),
+            clock_reads_.load(),clock_device_position_.load(),
+            clock_qpc_100ns_.load(),clock_frequency_.load()};
 }
 void WasapiSharedRenderer::publish_initialized(HRESULT hr, OutputInfo info) noexcept {
     {
@@ -233,6 +239,15 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     ComPtr<IAudioRenderClient> render;
     hr = client->GetService(IID_PPV_ARGS(render.GetAddressOf()));
     if (FAILED(hr)) { publish_initialized(hr); return; }
+    // Clock telemetry is optional; output still works without IAudioClock.
+    ComPtr<IAudioClock> audio_clock;
+    UINT64 hardware_frequency = 0;
+    if (SUCCEEDED(client->GetService(IID_PPV_ARGS(audio_clock.GetAddressOf())))) {
+        if (FAILED(audio_clock->GetFrequency(&hardware_frequency)) || !hardware_frequency)
+            audio_clock.Reset();
+    }
+    clock_frequency_.store(hardware_frequency, std::memory_order_relaxed);
+    unsigned clock_sample_counter = 0;
     // Preallocate before the realtime loop; no allocations in render events.
     std::vector<float> scratch;
     try { scratch.resize(static_cast<std::size_t>(info.buffer_frames) * 2); }
@@ -245,6 +260,15 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         if (padding > info.buffer_frames) return E_UNEXPECTED;
         const UINT32 frames = info.buffer_frames - padding;
         if (!frames) return S_OK;
+        // Device position units are clock-frequency ticks; QPC is 100ns.
+        if (audio_clock && (++clock_sample_counter % 8u) == 0u) {
+            UINT64 ticks = 0, qpc100ns = 0;
+            if (SUCCEEDED(audio_clock->GetPosition(&ticks, &qpc100ns))) {
+                clock_device_position_.store(ticks, std::memory_order_relaxed);
+                clock_qpc_100ns_.store(qpc100ns, std::memory_order_relaxed);
+                clock_reads_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         // Callback production is paced by actual WASAPI render-buffer demand,
         // not by an independent std::chrono timer. Do this before GetBuffer.
         UINT32 remaining = frames;
@@ -271,15 +295,16 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         return render->ReleaseBuffer(frames, 0);
     };
 
+    // Apply MMCSS before any host callback on the pre-roll path.
+    DWORD avrt_index = 0;
+    MmcssOwner mmcss{AvSetMmThreadCharacteristicsW(L"Pro Audio", &avrt_index)};
+    if (!mmcss.value) mmcss.value = AvSetMmThreadCharacteristicsW(L"Audio", &avrt_index);
+    if (mmcss.value) AvSetMmThreadPriority(mmcss.value, AVRT_PRIORITY_HIGH);
     hr = render_available(); // prime with data or silence
     if (FAILED(hr)) { publish_initialized(hr); return; }
     hr = client->Start();
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ClientStopOwner stop_client{client.Get()};
-    DWORD avrt_index = 0;
-    MmcssOwner mmcss{AvSetMmThreadCharacteristicsW(L"Pro Audio", &avrt_index)};
-    if (!mmcss.value) mmcss.value = AvSetMmThreadCharacteristicsW(L"Audio", &avrt_index);
-    if (mmcss.value) AvSetMmThreadPriority(mmcss.value, AVRT_PRIORITY_HIGH);
     publish_initialized(S_OK, info);
 
     HANDLE events[2]{stop_event_, audio_event.value};
