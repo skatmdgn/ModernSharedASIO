@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -14,11 +15,8 @@ namespace modern_asio {
 class SpscStereoRing final {
 public:
     explicit SpscStereoRing(std::size_t capacity_frames)
-        : capacity_(capacity_frames), mask_(capacity_frames - 1),
-          samples_(capacity_frames * 2, 0.0f) {
-        if (capacity_frames < 2 || (capacity_frames & (capacity_frames - 1)) != 0)
-            throw std::invalid_argument("ring capacity must be a power of two >= 2");
-    }
+        : capacity_(validate_capacity(capacity_frames)), mask_(capacity_ - 1),
+          samples_(capacity_ * 2, 0.0f) {}
     SpscStereoRing(const SpscStereoRing&) = delete;
     SpscStereoRing& operator=(const SpscStereoRing&) = delete;
 
@@ -56,6 +54,12 @@ public:
         return count;
     }
 
+    // Use only after both producer and consumer threads have stopped.
+    void clear_stopped() noexcept {
+        read_.store(0, std::memory_order_relaxed);
+        write_.store(0, std::memory_order_relaxed);
+        std::fill(samples_.begin(), samples_.end(), 0.0f);
+    }
     std::size_t available_frames() const noexcept {
         const auto read = read_.load(std::memory_order_acquire);
         const auto write = write_.load(std::memory_order_acquire);
@@ -63,6 +67,13 @@ public:
     }
 
 private:
+    static std::size_t validate_capacity(std::size_t n) {
+        if (n < 2 || (n & (n - 1)) != 0 ||
+            n > std::numeric_limits<std::size_t>::max() / (2*sizeof(float)) ||
+            n > std::numeric_limits<std::uint64_t>::max() / 2)
+            throw std::invalid_argument("ring capacity must be power of two >=2 without overflow");
+        return n;
+    }
     const std::size_t capacity_;
     const std::size_t mask_;
     std::vector<float> samples_;
