@@ -53,7 +53,7 @@ HRESULT reg_text(HKEY key,const wchar_t* name,const wchar_t* s) noexcept {
 }
 class Driver final : public IASIO {
 public:
-    Driver():render_(fifo_),bridge_(fifo_) {g_objects.fetch_add(1);}
+    Driver():render_(fifo_, &Driver::request_audio, this, kFrames),bridge_(fifo_) {g_objects.fetch_add(1);}
     ~Driver(){stop();g_objects.fetch_sub(1);}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,void** ppv) override {
         if(!ppv)return E_POINTER;
@@ -97,8 +97,10 @@ public:
     long getDriverVersion() override {return 0x0200;}
     void getErrorMessage(char* s) override {put_text(s,error_,124);}
     ASIOError start() override {
-        if(!initialized_||!prepared_||thread_.joinable())return ASE_InvalidMode;
+        if(!initialized_||!prepared_||playing_)return ASE_InvalidMode;
         fifo_.clear_stopped();
+        position_.store(0,std::memory_order_release);
+        buffer_index_=0;
         // ASIO host can prefill output half B before start.
         bridge_.submit(active_[0]?planar_[0][1].data():nullptr,
                        active_[1]?planar_[1][1].data():nullptr,kFrames);
@@ -109,18 +111,15 @@ public:
             put_text(error_,"Device mix sample rate changed; reload driver",sizeof(error_));
             return ASE_NoClock;
         }
-        stopping_.store(false);
-        try { thread_=std::thread([this]{run_callbacks();}); }
-        catch (...) {render_.stop();return ASE_NoMemory;}
+        playing_=true; // callbacks now execute on the WASAPI event worker
         return ASE_OK;
     }
     ASIOError stop() override {
-        if(thread_.joinable()){
-            if(thread_.get_id()==std::this_thread::get_id())return ASE_InvalidMode;
-            stopping_.store(true,std::memory_order_release);
-            thread_.join();
-        }
+        // A synchronous host Stop from inside its own callback is unsupported.
+        // Never attempt to join/free a still-running WASAPI callback thread.
+        if(render_.on_render_thread())return ASE_InvalidMode;
         render_.stop();
+        playing_=false;
         return ASE_OK;
     }
     ASIOError getChannels(long* in,long* out) override {
@@ -170,7 +169,7 @@ public:
         return ASE_OK;
     }
     ASIOError createBuffers(ASIOBufferInfo* info,long count,long frames,ASIOCallbacks* cb) override {
-        if(!initialized_||prepared_||thread_.joinable())return ASE_InvalidMode;
+        if(!initialized_||prepared_||playing_)return ASE_InvalidMode;
         if(!info||count<1||count>2||frames!=kFrames||!cb||!cb->bufferSwitch)return ASE_InvalidParameter;
         bool selected[2]{false,false};
         for(long i=0;i<count;++i){
@@ -187,10 +186,10 @@ public:
         callbacks_=cb;
         time_info_=cb->asioMessage && cb->bufferSwitchTimeInfo &&
             cb->asioMessage(kAsioSupportsTimeInfo,0,nullptr,nullptr)==1;
-        position_.store(0);prepared_=true;return ASE_OK;
+        position_.store(0);buffer_index_=0;prepared_=true;return ASE_OK;
     }
     ASIOError disposeBuffers() override {
-        if(thread_.joinable())return ASE_InvalidMode;
+        if(playing_)return ASE_InvalidMode;
         if(!prepared_)return ASE_InvalidMode;
         callbacks_=nullptr;prepared_=false;active_[0]=active_[1]=false;
         for(auto& pair:planar_)for(auto& v:pair)v.clear();
@@ -200,39 +199,47 @@ public:
     ASIOError future(long,void*) override {return ASE_NotPresent;}
     ASIOError outputReady() override {return ASE_OK;}
 private:
-    void run_callbacks() noexcept {
-        auto period=std::chrono::nanoseconds(static_cast<std::int64_t>(
-             1000000000ULL*kFrames/rate_));
-        auto next=std::chrono::steady_clock::now();
-        long index=0;
-        ASIOTime time{};
-        time.timeInfo.speed=1.;
-        time.timeInfo.sampleRate=static_cast<double>(rate_);
-        time.timeInfo.flags=kSystemTimeValid|kSamplePositionValid|kSampleRateValid;
-        while(!stopping_.load(std::memory_order_acquire)){
+    static bool request_audio(void* raw) noexcept {
+        return static_cast<Driver*>(raw)->produce_one_block();
+    }
+    bool produce_one_block() noexcept {
+        // Only the WASAPI render worker calls this after start().
+        if(!prepared_||!callbacks_)return false;
+        const long index=buffer_index_;
+        try {
             if(time_info_ && callbacks_->bufferSwitchTimeInfo){
-                write64(time.timeInfo.samplePosition,position_.load());
+                ASIOTime time{};
+                time.timeInfo.speed=1.;
+                time.timeInfo.sampleRate=static_cast<double>(rate_);
+                time.timeInfo.flags=kSystemTimeValid|kSamplePositionValid|kSampleRateValid;
+                write64(time.timeInfo.samplePosition,position_.load(std::memory_order_relaxed));
                 write64(time.timeInfo.systemTime,qpc_ns());
-                callbacks_->bufferSwitchTimeInfo(&time,index,ASIOFalse);
-            } else callbacks_->bufferSwitch(index,ASIOFalse);
-            if(stopping_.load(std::memory_order_acquire))break;
-            bridge_.submit(active_[0]?planar_[0][index].data():nullptr,
-                           active_[1]?planar_[1][index].data():nullptr,kFrames);
-            position_.fetch_add(kFrames,std::memory_order_release);
-            index^=1;
-            next+=period;
-            if(std::chrono::steady_clock::now()>next+period)
-                next=std::chrono::steady_clock::now();
-            // Experimental free-running callback timer, NOT synchronized to device clock.
-            std::this_thread::sleep_until(next);
+                callbacks_->bufferSwitchTimeInfo(&time,index,ASIOTrue);
+            } else {
+                callbacks_->bufferSwitch(index,ASIOTrue);
+            }
+        } catch (...) {
+            callback_errors_.fetch_add(1,std::memory_order_relaxed);
+            return false;
         }
+        const auto accepted=bridge_.submit(active_[0]?planar_[0][index].data():nullptr,
+                                           active_[1]?planar_[1][index].data():nullptr,kFrames);
+        if(accepted!=kFrames){
+            callback_errors_.fetch_add(1,std::memory_order_relaxed);
+            return false;
+        }
+        position_.fetch_add(kFrames,std::memory_order_release);
+        buffer_index_^=1;
+        return true;
     }
     std::atomic<ULONG> ref_{1};
     modern_asio::SpscStereoRing fifo_{32768};
     modern_asio::WasapiSharedRenderer render_;
     modern_asio::AsioPlaybackBridge bridge_;
-    std::thread thread_;
-    std::atomic<bool> stopping_{false};
+    // Control thread owns playing_; render callback never mutates it.
+    bool playing_{false};
+    long buffer_index_{0};
+    std::atomic<std::uint64_t> callback_errors_{0};
     std::atomic<std::uint64_t> position_{0};
     std::array<std::array<std::vector<float>,2>,2> planar_{};
     ASIOCallbacks* callbacks_{nullptr};

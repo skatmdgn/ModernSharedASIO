@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include "modern_asio/wasapi_shared_renderer.hpp"
 #include "modern_asio/period_policy.hpp"
+#include "modern_asio/engine_demand.hpp"
 #include <audioclient.h>
 #include <avrt.h>
 #include <cmath>
@@ -144,9 +145,14 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     return hr;
 }
 
+bool WasapiSharedRenderer::on_render_thread() const noexcept {
+    return thread_.joinable() && thread_.get_id() == std::this_thread::get_id();
+}
 void WasapiSharedRenderer::stop() noexcept {
-    // Must be called by the owning control thread, never the render worker.
+    // The worker cannot join itself. On the render worker, only signal shutdown
+    // and let the owning control thread perform the later join and cleanup.
     if (stop_event_) SetEvent(stop_event_);
+    if (on_render_thread()) return;
     if (thread_.joinable()) thread_.join();
     if (stop_event_) { CloseHandle(stop_event_); stop_event_ = nullptr; }
 }
@@ -239,14 +245,28 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         if (padding > info.buffer_frames) return E_UNEXPECTED;
         const UINT32 frames = info.buffer_frames - padding;
         if (!frames) return S_OK;
+        // Callback production is paced by actual WASAPI render-buffer demand,
+        // not by an independent std::chrono timer. Do this before GetBuffer.
+        UINT32 remaining = frames;
+        UINT32 offset = 0;
+        const auto capacity = static_cast<UINT32>(
+            std::min<std::size_t>(queue_.capacity_frames(), UINT32_MAX));
+        while (remaining) {
+            const auto batch = std::min(remaining, capacity);
+            fulfill_audio_demand(queue_, batch, source_block_frames_,
+                                 source_, source_context_);
+            const auto got = queue_.pop(scratch.data() + static_cast<std::size_t>(offset) * 2, batch);
+            if (got < batch) {
+                std::memset(scratch.data() + (static_cast<std::size_t>(offset) + got) * 2,
+                            0, static_cast<std::size_t>(batch - got) * 2 * sizeof(float));
+                underrun_frames_.fetch_add(batch - got, std::memory_order_relaxed);
+            }
+            offset += batch;
+            remaining -= batch;
+        }
         BYTE* dest = nullptr;
         result = render->GetBuffer(frames, &dest);
         if (FAILED(result)) return result;
-        const auto got = queue_.pop(scratch.data(), frames);
-        if (got < frames) {
-            std::memset(scratch.data() + got * 2, 0, (frames - got) * 2 * sizeof(float));
-            underrun_frames_.fetch_add(frames - got, std::memory_order_relaxed);
-        }
         convert(scratch.data(), dest, frames, fmt);
         return render->ReleaseBuffer(frames, 0);
     };

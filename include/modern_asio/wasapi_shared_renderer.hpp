@@ -13,6 +13,7 @@
 #include <mutex>
 #include <thread>
 #include "modern_asio/spsc_stereo_ring.hpp"
+#include "modern_asio/engine_demand.hpp"
 
 namespace modern_asio {
 struct OutputInfo {
@@ -34,7 +35,12 @@ struct OutputStats {
 // resources which that thread could still reference.
 class WasapiSharedRenderer final {
 public:
-    explicit WasapiSharedRenderer(SpscStereoRing& queue) noexcept : queue_(queue) {}
+    explicit WasapiSharedRenderer(SpscStereoRing& queue,
+                                 AudioRequest source = nullptr,
+                                 void* context = nullptr,
+                                 std::uint32_t source_block_frames = 0) noexcept
+        : queue_(queue), source_(source), source_context_(context),
+          source_block_frames_(source_block_frames) {}
     ~WasapiSharedRenderer() { stop(); }
     WasapiSharedRenderer(const WasapiSharedRenderer&) = delete;
     WasapiSharedRenderer& operator=(const WasapiSharedRenderer&) = delete;
@@ -43,6 +49,8 @@ public:
     // NEVER acquires WASAPI exclusive mode.
     HRESULT start(std::uint32_t target_period_ms = 0);
     void stop() noexcept;
+    // Only the render worker calls the source; never call stop() from this thread.
+    bool on_render_thread() const noexcept;
     OutputInfo device_info() const noexcept;
     OutputStats stats() const noexcept;
 
@@ -50,6 +58,9 @@ private:
     void thread_main(std::uint32_t period_ms) noexcept;
     void publish_initialized(HRESULT hr, OutputInfo info = {}) noexcept;
     SpscStereoRing& queue_;
+    AudioRequest source_{nullptr};
+    void* source_context_{nullptr};
+    std::uint32_t source_block_frames_{0};
     HANDLE stop_event_{nullptr};
     std::thread thread_;
     mutable std::mutex mutex_;
