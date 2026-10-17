@@ -26,3 +26,7 @@
 8. Default device is eConsole, eRender. Device re-open on errors/hotplug is future work. A successful silence smoke does not validate xrun-free DAW operation.
 
 **Validation:** local portable tests PASS; Windows build and runtime NOT_TESTED. No native ASIO DLL yet.
+
+## Batch 3 scheduling revision
+
+The independent `std::chrono::sleep_until` ASIO callback thread has been removed. WASAPI worker render events now request missing 512-frame ASIO blocks through `fulfill_audio_demand`; no producer callback is invoked if sufficient frames are queued. Work per event is bounded by FIFO capacity and stalls are detected. MMCSS is acquired before first host callback. Periodic IAudioClock measurements are diagnostic only; `getSamplePosition()` and ASIO timeinfo still use generated-frame count/QPC, not a calibrated hardware clock. This is an experimental event-paced architecture, not verified low-latency performance.

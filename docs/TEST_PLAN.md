@@ -11,3 +11,7 @@
 9. Soak >= 30min and compare original/new underruns, CPU and measured loopback latency before performance claims.
 
 Any unexecuted item stays NOT_TESTED rather than PASS.
+
+10. Run `modern_asio_clock_sim_tests` to validate frame conservation for 44.1kHz and 48kHz *simulated* 10ms events. These results are never proof of actual Windows performance.
+11. Log IAudioClock device position, GetFrequency and QPC (100-ns units) from smoke output. Correlate against actual render events and underruns in Windows before claiming drift/latency improvements.
+12. Check that the ASIO callback directly on the WASAPI render worker does not block the device deadline on heavy Cubase projects. If it does, implement a bounded, clock-paced producer rather than reinstate a free-running timer.
