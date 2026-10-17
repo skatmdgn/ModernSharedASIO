@@ -130,6 +130,7 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     render_events_.store(0);
     underrun_frames_.store(0);
     errors_.store(0);
+    producer_failures_.store(0);
     clock_reads_.store(0);
     clock_device_position_.store(0);
     clock_qpc_100ns_.store(0);
@@ -166,7 +167,7 @@ OutputInfo WasapiSharedRenderer::device_info() const noexcept {
 }
 OutputStats WasapiSharedRenderer::stats() const noexcept {
     return {render_events_.load(), underrun_frames_.load(), errors_.load(),
-            clock_reads_.load(),clock_device_position_.load(),
+            producer_failures_.load(),clock_reads_.load(),clock_device_position_.load(),
             clock_qpc_100ns_.load(),clock_frequency_.load()};
 }
 void WasapiSharedRenderer::publish_initialized(HRESULT hr, OutputInfo info) noexcept {
@@ -253,7 +254,8 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     try { scratch.resize(static_cast<std::size_t>(info.buffer_frames) * 2); }
     catch (...) { publish_initialized(E_OUTOFMEMORY); return; }
 
-    auto render_available = [&]() -> HRESULT {
+    // Startup priming must not synchronously call the Cubase host.
+    auto render_available = [&](bool allow_host_callback) -> HRESULT {
         UINT32 padding = 0;
         auto result = client->GetCurrentPadding(&padding);
         if (FAILED(result)) return result;
@@ -277,13 +279,18 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
             std::min<std::size_t>(queue_.capacity_frames(), UINT32_MAX));
         while (remaining) {
             const auto batch = std::min(remaining, capacity);
-            fulfill_audio_demand(queue_, batch, source_block_frames_,
-                                 source_, source_context_);
+            const auto demand = fulfill_audio_demand(queue_, batch, source_block_frames_,
+                                                      source_, source_context_,
+                                                      allow_host_callback);
+            if (demand.stalled)
+                producer_failures_.fetch_add(1,std::memory_order_relaxed);
             const auto got = queue_.pop(scratch.data() + static_cast<std::size_t>(offset) * 2, batch);
             if (got < batch) {
                 std::memset(scratch.data() + (static_cast<std::size_t>(offset) + got) * 2,
                             0, static_cast<std::size_t>(batch - got) * 2 * sizeof(float));
-                underrun_frames_.fetch_add(batch - got, std::memory_order_relaxed);
+                // Initial startup silence is intentional, not a device underrun.
+                if (allow_host_callback)
+                    underrun_frames_.fetch_add(batch - got, std::memory_order_relaxed);
             }
             offset += batch;
             remaining -= batch;
@@ -300,7 +307,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     MmcssOwner mmcss{AvSetMmThreadCharacteristicsW(L"Pro Audio", &avrt_index)};
     if (!mmcss.value) mmcss.value = AvSetMmThreadCharacteristicsW(L"Audio", &avrt_index);
     if (mmcss.value) AvSetMmThreadPriority(mmcss.value, AVRT_PRIORITY_HIGH);
-    hr = render_available(); // prime with data or silence
+    hr = render_available(false); // prime with prefilled ASIO B half and silence
     if (FAILED(hr)) { publish_initialized(hr); return; }
     hr = client->Start();
     if (FAILED(hr)) { publish_initialized(hr); return; }
@@ -313,7 +320,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         if (wait == WAIT_OBJECT_0) break;
         if (wait == WAIT_OBJECT_0 + 1) {
             render_events_.fetch_add(1, std::memory_order_relaxed);
-            hr = render_available();
+            hr = render_available(true);
             if (FAILED(hr)) { errors_.fetch_add(1, std::memory_order_relaxed); break; }
         } else if (wait == WAIT_TIMEOUT) {
             errors_.fetch_add(1, std::memory_order_relaxed);

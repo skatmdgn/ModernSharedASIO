@@ -106,14 +106,20 @@ public:
                                           active_[1]?planar_[1][1].data():nullptr,kFrames);
         if(initial!=kFrames)return ASE_HWMalfunction;
         position_.store(kFrames,std::memory_order_release);
+        // Stream is active during backend start: its worker may call the host.
+        playing_.store(true,std::memory_order_release);
         auto hr=render_.start(0);
-        if(FAILED(hr)){put_text(error_,"WASAPI shared-mode startup failed",sizeof(error_));return ASE_HWMalfunction;}
+        if(FAILED(hr)){
+            playing_.store(false,std::memory_order_release);
+            put_text(error_,"WASAPI shared-mode startup failed",sizeof(error_));
+            return ASE_HWMalfunction;
+        }
         if(render_.device_info().sample_rate!=rate_){
             render_.stop();
+            playing_.store(false,std::memory_order_release);
             put_text(error_,"Device mix sample rate changed; reload driver",sizeof(error_));
             return ASE_NoClock;
         }
-        playing_=true; // callbacks now execute on the WASAPI event worker
         return ASE_OK;
     }
     ASIOError stop() override {
@@ -121,7 +127,7 @@ public:
         // Never attempt to join/free a still-running WASAPI callback thread.
         if(render_.on_render_thread())return ASE_InvalidMode;
         render_.stop();
-        playing_=false;
+        playing_.store(false,std::memory_order_release);
         return ASE_OK;
     }
     ASIOError getChannels(long* in,long* out) override {
@@ -239,7 +245,7 @@ private:
     modern_asio::WasapiSharedRenderer render_;
     modern_asio::AsioPlaybackBridge bridge_;
     // Control thread owns playing_; render callback never mutates it.
-    bool playing_{false};
+    std::atomic<bool> playing_{false};
     long buffer_index_{0};
     std::atomic<std::uint64_t> callback_errors_{0};
     std::atomic<std::uint64_t> position_{0};

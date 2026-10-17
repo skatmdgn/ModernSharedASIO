@@ -1,6 +1,6 @@
 # ModernSharedASIO
 
-**Status: Batch 3 WASAPI-event-driven experimental ASIO DLL source. Windows compilation and Cubase 8 testing NOT done. Not ready to install.**
+**Status: Batch 4 startup-safety prototype; portable tests PASS, Windows compilation and Cubase 8 tests NOT DONE. Do not install.**
 
 Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 
@@ -13,7 +13,8 @@ Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 
 - 5-second shared-mode smoke executable and **registry-free COM factory preflight** executable.
 - ASIO callback block generation driven by WASAPI render events, no independent callback sleep timer.
 - Optional IAudioClock output diagnostics (device ticks, frequency, QPC timestamp in 100-ns units).
-- Portable demand tests and 44.1/48k event-consumption simulations.
+- Portable demand tests, startup callback isolation test, and 44.1/48k event-consumption simulations.
+- Initial WASAPI priming bypasses Cubase callbacks; active-state protection covers startup, and producer failures are separately reported.
 - Corrected COM lifetime ordering and 24 valid bit / 32-bit PCM container conversion.
 
 ## Build
@@ -34,6 +35,8 @@ cmake --build build-win --config Debug
 ctest --test-dir build-win -C Debug --output-on-failure
 .\build-win\Debug\modern_asio_preflight.exe .\build-win\Debug\ModernSharedASIO.dll
 ```
+
+Windows x64 manual build and registry-free COM preflight helper: `scripts/build_windows_x64.ps1`. It does not install or register a driver.
 
 No source or compiled binaries from the ASIO SDK are bundled. Refer to [SDK licensing and compatibility](docs/SDK_COMPATIBILITY.md).
 

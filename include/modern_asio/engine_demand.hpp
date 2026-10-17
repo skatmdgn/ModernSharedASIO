@@ -16,11 +16,12 @@ inline DemandResult fulfill_audio_demand(SpscStereoRing& fifo,
                                          std::size_t requested_frames,
                                          std::size_t block_frames,
                                          AudioRequest request,
-                                         void* context) noexcept {
+                                         void* context,
+                                         bool allow_source = true) noexcept {
     DemandResult result{};
     const auto capacity = fifo.capacity_frames();
     const auto target = std::min(requested_frames, capacity);
-    if (!request || block_frames == 0 || block_frames > capacity) {
+    if (!allow_source || !request || block_frames == 0 || block_frames > capacity) {
         result.available_frames = fifo.available_frames();
         return result;
     }

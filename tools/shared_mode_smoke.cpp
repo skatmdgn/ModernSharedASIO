@@ -61,7 +61,8 @@ int wmain(int argc, wchar_t** argv) {
     device.stop();
     const auto stats = device.stats();
     std::cout << "render_events=" << stats.render_events << " underrun_frames="
-              << stats.underrun_frames << " stream_errors=" << stats.errors << "\n";
+              << stats.underrun_frames << " stream_errors=" << stats.errors
+              << " producer_failures=" << stats.producer_failures << "\n";
     std::cout << "clock_reads=" << stats.clock_reads
               << " device_ticks=" << stats.clock_device_position
               << " frequency=" << stats.clock_frequency

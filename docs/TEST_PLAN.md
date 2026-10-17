@@ -15,3 +15,7 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 10. Run `modern_asio_clock_sim_tests` to validate frame conservation for 44.1kHz and 48kHz *simulated* 10ms events. These results are never proof of actual Windows performance.
 11. Log IAudioClock device position, GetFrequency and QPC (100-ns units) from smoke output. Correlate against actual render events and underruns in Windows before claiming drift/latency improvements.
 12. Check that the ASIO callback directly on the WASAPI render worker does not block the device deadline on heavy Cubase projects. If it does, implement a bounded, clock-paced producer rather than reinstate a free-running timer.
+
+13. Validate startup callback isolation; first priming never invokes Cubase producer. A later real WASAPI device event may race outer ASIO start return and needs host validation.
+14. Record producer_failures separately from stream_errors and underrun_frames; startup zero padding is intentional, not a real runtime xrun.
+15. Use scripts/build_windows_x64.ps1 for Windows x64 build and registry-free COM preflight, never automatic driver registration.
