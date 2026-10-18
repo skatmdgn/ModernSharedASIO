@@ -119,3 +119,7 @@ User clarifies that playhead=0 covers an EMPTY project section, yet audio from a
 ## Full source audit (2026-10-18)
 
 ModernSharedASIO active code audited against Cubase empty bar0/future bar16 audio. Queue bound only 32768 frames (<0.7s) and 1024-frame target, so the current queue alone cannot buffer 16 bars. Key confirmed SDK time contract violation: getSamplePosition had block-aligned sample position but timestamp sampled freshly via QPC (and TimeInfo Windows clock source QPC vs required timeGetTime). Added coherent ASIO block stamp channel, SDK-domain timeGetTime, mini-host consistency asserts, and planar buffer-zero before callback to eliminate stale output on skipped writes. Added 2 portable tests and local Clang ASan/UBSan PASS. MSVC Windows compile / Cubase test NOT RUN for this source revision. See docs/FULL_SOURCE_AUDIT_2026_10_18.md.
+
+## New decisive Cubase observation: live VST input works, programmed MIDI playback does not
+
+2026-10-18 user: playing via MIDI master keyboard triggers VST notes at correct time, while playing placed/drawn MIDI parts produces wrong time/content including source from around 16 bars later at empty playhead=0. This is distinct from output buffering latency. The mini-host never tested MIDI scheduling. Steinberg describes real-time monitored/record-armed VST paths vs ASIO-Guard pre-rendered unarmed paths; actual cause still open, earlier ASIO-Guard change not reported as a fix. See docs/CUBASE_LIVE_VS_SEQUENCED_MIDI.md.

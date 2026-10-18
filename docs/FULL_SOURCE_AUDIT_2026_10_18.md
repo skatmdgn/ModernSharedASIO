@@ -48,3 +48,7 @@
 4. If future-content persists, do **not** make additional speculative buffer/latency changes. Implement bar-anchored, privacy-preserving PCM marker capture at the point Cubase fills ASIO buffers and at WASAPI render output (loopback or non-RT trace), allowing exact comparison; the driver does not directly know Cubase's playhead.
 
 **Status: audited source; two static defects corrected and portable tests run; production Cubase bug UNRESOLVED until real runtime validation.**
+
+### Critical new differential: live controller MIDI works, drawn MIDI does not (2026-10-18)
+
+User found that playing VSTi from master keyboard gives responsive correct real-time sound, whereas the same project's programmed MIDI notes can trigger material apparently from ~16 bars later when transport is at an empty bar 0. This distinguishes real-time note triggering from sequencer playback and narrows investigation to Cubase's scheduled-VST processing, ASIO-Guard/preprocessing, latency compensation and host clock association. Existing 440Hz ASIO tests never exercised MIDI sequencing. See docs/CUBASE_LIVE_VS_SEQUENCED_MIDI.md. **No evidence yet whether record-enabling the same MIDI track while playing its programmed part changes the outcome.**
