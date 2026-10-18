@@ -64,3 +64,6 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 
 47. Fresh Cubase project at 120 BPM 4/4: Audio plays approximately 24 bars ahead (48s), programmed MIDI notes fail entirely, live controller MIDI VST works. Prior 16 bars=32s. Eliminate 'only audio works' as older report; new clean project contradicts it.
 48. Diagnostic timing discriminant: starting from same zero position after 30s Cubase transport STOP while ASIO driver/engine loaded—if forward audio offset increases by ~15 bars, look for uncorrected ASIO engine uptime entering project timeline; if not, investigate other transport/PDC/ASIO SDK sync. Leave tempo, routing, tracks unchanged. No new DLL code before this test.
+
+49. New 100-callback ASIO handoff regression: prefill B with .25, callback 0 fills A with 1 and must output B .25; callback 1 fills B with 2 must output A 1; callback 2 fills A with 3 must output B 2. Continue for 100 calls, compare every output sample; this fails previous immediate-current-half driver policy.
+50. Windows CTest expected 14. With normal Cubase master-keyboard / Audio / drawn MIDI use, ensure stable live input AND restoration of sequenced playback + no future 24-bar content. No proof of cure until actual comparison.

@@ -129,3 +129,7 @@ The user hears source music located ~16 bars into the arrangement when transport
 ### New critical diagnosis: live MIDI vs sequenced MIDI (2026-10-18)
 
 User reports master-keyboard VSTi live notes trigger normally, whereas programmed/drawn MIDI note playback in Cubase 8 can generate later-bar music when the transport starts over an empty section at bar 0. This is a sequencer playback / real-time VST path differential, **not proof of buffering latency or a direct MIDI bug in the ASIO driver**. Monitored/record-enabled tracks and normal playback tracks can take different real-time/ASIO-Guard processing routes. Next test: toggle **only Record Enable on the same VSTi track** and play the same MIDI part without recording; see [docs/CUBASE_LIVE_VS_SEQUENCED_MIDI.md](docs/CUBASE_LIVE_VS_SEQUENCED_MIDI.md). No new source patch or cure claim.
+
+### ASIO double-buffer output handoff correction (2026-10-18, Windows test pending)
+
+Official ASIO SDK `bufferSwitch` and reference FlexASIO require the OUTPUT hardware to consume the **opposite** half of the ASIO half Cubase starts writing. This driver mistakenly queued the just-written same half after callback. Changed to opposite half and removed duplicated startup B enqueue; added distinct-output-half, 100-callback FIFO regression. User's constant ~24-bar future-audio and silent sequenced MIDI are **not yet verified fixed** and may have another cause. Documentation: [ASIO_OUTPUT_HALF_HANDOFF](docs/ASIO_OUTPUT_HALF_HANDOFF.md). Original Steinberg DLL and registration unaffected.

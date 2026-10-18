@@ -29,3 +29,7 @@
 - MIDI sequencer remains silent but live controller sound normal regardless: consistent with timeline-event scheduling broken, NOT VST synth or speaker failure. Driver sees only PCM and cannot directly schedule Cubase MIDI notes.
 
 **Severity:** actual Cubase multitrack/sequence quality gate remains FAILED. Never claim an ASIO software fix based on this observation alone. Do not modify original Steinberg DLL or registry keys. No CI until final gate.
+
+## 2026-10-18 observation supersedes growing-idle-time assumption
+
+User explicitly states every time Play is pressed, Audio content ~24 bars ahead is heard. There is NO reported dependence on how long the transport waits in Stop. Do not keep asking to retest 'wait 30 seconds' or claim a 15-bar change. Root-cause hypothesis about unadjusted engine uptime is not supported. A verified SDK ASIO output-half contract defect was separately identified: callback says fill A, hardware must use B, whereas ModernSharedASIO was outputting A; see docs/ASIO_OUTPUT_HALF_HANDOFF.md.

@@ -123,3 +123,7 @@ ModernSharedASIO active code audited against Cubase empty bar0/future bar16 audi
 ## New decisive Cubase observation: live VST input works, programmed MIDI playback does not
 
 2026-10-18 user: playing via MIDI master keyboard triggers VST notes at correct time, while playing placed/drawn MIDI parts produces wrong time/content including source from around 16 bars later at empty playhead=0. This is distinct from output buffering latency. The mini-host never tested MIDI scheduling. Steinberg describes real-time monitored/record-armed VST paths vs ASIO-Guard pre-rendered unarmed paths; actual cause still open, earlier ASIO-Guard change not reported as a fix. See docs/CUBASE_LIVE_VS_SEQUENCED_MIDI.md.
+
+## Callback output half violation found, source correction (2026-10-18)
+
+Constant audio output of material ~24 bars later at Cubase bar0 contradicts earlier engine-idle drift hypothesis. The ASIO SDK bufferSwitch documentation and FlexASIO's working copy-to-device implementation require outputting the OTHER half, not same just-written `bufferSwitch` half. In ModernSharedASIO the code did the latter; fixed to opposite-half FIFO submit, removed eager B start enqueue (avoid double B), added 100-step distinct A/B host output regression. **Only source written; Windows 14 CTests and Cubase still pending.**

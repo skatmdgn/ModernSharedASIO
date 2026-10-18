@@ -15,6 +15,7 @@
 #include "modern_asio/asio_callback_timeline.hpp"
 #include "modern_asio/asio_block_stamp.hpp"
 #include "modern_asio/asio_output_silence.hpp"
+#include "modern_asio/asio_double_buffer_handoff.hpp"
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <wrl/client.h>
@@ -182,12 +183,13 @@ public:
         callback_timeline_.reset();
         callback_stamp_.publish({0,asio_system_clock_ns()});
         buffer_index_=0;
-        // ASIO host can prefill output half B before start.
-        const auto initial=bridge_.submit(active_[0]?planar_[0][1].data():nullptr,
-                                          active_[1]?planar_[1][1].data():nullptr,kFrames);
-        if(initial!=kFrames)return ASE_HWMalfunction;
-        // Prefilling output B does NOT advance the ASIO callback sample position.
-        // The first bufferSwitch/index 0 must report samplePosition=0.
+        // Do not queue B output here. ASIO bufferSwitch(0) asks Cubase to
+        // prepare A while the OPPOSITE previously prepared B is output.
+        // The WASAPI render worker initially primes its own device buffer
+        // with silence; producer callback 0 transfers B exactly once.
+        // Eagerly queuing B and then also queuing A would violate the
+        // ASIO alternating-output contract and duplicate initial audio.
+        // The first host bufferSwitch(index=0) reports samplePosition=0.
         // Cubase DSP runs on a dedicated producer worker, not the render worker.
         producer_stop_event_=CreateEventW(nullptr,TRUE,FALSE,nullptr);
         producer_wake_event_=CreateEventW(nullptr,FALSE,FALSE,nullptr);
@@ -447,8 +449,13 @@ private:
         };
         keep_max(max_left_peak_ppm_,peak_ppm(left_peak));
         keep_max(max_right_peak_ppm_,peak_ppm(right_peak));
-        const auto accepted=bridge_.submit(active_[0]?planar_[0][index].data():nullptr,
-                                           active_[1]?planar_[1][index].data():nullptr,kFrames);
+        // ASIO SDK contract: index is the half the host is NOW filling.
+        // The OTHER half is the one hardware must play this period.
+        // Never queue the just-written half directly.
+        const long output_index=modern_asio::asio_output_half_for_callback(index);
+        const auto accepted=bridge_.submit(
+            active_[0]?planar_[0][output_index].data():nullptr,
+            active_[1]?planar_[1][output_index].data():nullptr,kFrames);
         if(accepted!=kFrames){
             callback_errors_.fetch_add(1,std::memory_order_relaxed);
             return false;

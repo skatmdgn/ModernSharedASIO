@@ -56,3 +56,7 @@ User found that playing VSTi from master keyboard gives responsive correct real-
 ### Later 2026-10-18 clean-project reproduction
 
 On fresh 4/4, 120 BPM project, host Audio output heard approximately 24 bars ahead while programmed MIDI is completely silent; live master keyboard MIDI sounds normal. This supersedes earlier claims that Audio tracks are generally okay. 24 bars equals 48 s / 2304000 frames / 4500 ASIO callback blocks; 16 bars equals 32 s / 1536000 frames / 3000 blocks. Is the difference simply engine uptime before pressing Play? UNKNOWN. `docs/CUBASE_TRANSPORT_EPOCH_TEST.md` introduces a 30-second stopped-engine-with-driver-loaded wait test that predicts an *additional 15-bar* shift if epoch mismatch exists. No code change without causality evidence.
+
+### Audit addendum: essential ASIO double-buffer semantics (2026-10-18)
+
+Found definite violation of SDK bufferSwitch output semantics and confirmed with independent FlexASIO. ASIO `doubleBufferIndex` identifies the buffer Cubase should **start filling**; the **other half** should go to hardware now. Old ModernSharedASIO read and submitted the just-written same half, and eagerly sent B once in start. Corrected to use opposite half after callback (0 -> output 1, 1 -> output 0), removed pre-start FIFO B duplication, added 100-callback distinct-buffer content regression. **This is a confirmed contract bug but not proof of 24-bar fix**. New test Windows run pending; see docs/ASIO_OUTPUT_HALF_HANDOFF.md.
