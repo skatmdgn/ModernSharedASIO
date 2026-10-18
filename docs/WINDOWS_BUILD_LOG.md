@@ -99,3 +99,7 @@ Cubase initial gate: close Cubase, use a 64-bit PowerShell **Run as Administrato
 ## Cubase real plugin regression / diagnostic source written
 
 User reports audible audio-file playback but severe delay, breaking VST instruments and silent Serum in Cubase 8.0.40. The miniature ASIO host only validated trivial 440Hz generation. We introduced 5ms shared-mode period request as a reversible performance test, plus stop-time ASIO callback and WASAPI underrun diagnostics. These are not yet Windows built or tested. See docs/CUBASE_DIAGNOSTICS.md. The previous successful WAV/YouTube and minimal ASIO tests remain valid, but Cubase production-quality gate fails.
+
+## Cubase callback sample-position correction staged (2026-10-18)
+
+User four-stop logs: requested 5ms, actual 10ms engine at 48k, some runs with 0 underrun despite broken VST, one or two over-budget host calls (max 18.6/14.7ms). Found confirmed ASIO 2.3 first-callback sample position violation: prior mini-host `sample_position_low = callback_count*512+512` is contrary to the spec; first callback position must be 0. Source now corrects sample position, adds host contract assertions and ASIO host output amplitude diagnostic counters. User Windows build and actual Cubase/Serum retest **NOT YET DONE**. See docs/ASIO_TIMELINE_FIX.md. Original driver unchanged.

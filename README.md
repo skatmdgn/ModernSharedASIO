@@ -105,3 +105,7 @@ Before Cubase 8.0.40 evaluation, opt-in reversible x64 installation instructions
 ## Cubase VSTi regression: diagnostics in progress
 
 Cubase 8.0.40 loads Modern Shared Audio and plays WAV audio, but VST instruments glitch, Serum may be silent and output latency is high. A new diagnostic build requests 5ms WASAPI shared periods where supported and writes callback timings and WASAPI underruns to %TEMP%\ModernSharedASIO-debug.log after IASIO::stop. An optional per-user PeriodMs override allows A/B comparison with the earlier Windows default period. This is **not yet built/tested on Windows**; users should use their old reliable ASIO driver for important work. See docs/CUBASE_DIAGNOSTICS.md.
+
+### ASIO 2.3 timeline bug fix / Cubase host samples diagnosis
+
+The ASIO SDK requires **samplePosition 0 at the first ASIO bufferSwitch after start**. Our earlier driver erroneously reported **512**, conflating driver pre-roll of output buffer B with host callback progression. New AsioCallbackTimeline corrects this distinction, while the registry-free mini-host now asserts positions and double-buffer ordering. MSVC Windows build and Serum retest are PENDING. User logs showed actual WASAPI engine remained 10ms despite requesting 5ms and had zero underruns in the two longer failing VST runs. New stop-time host sample amplitude metrics and a reversible DisableTimeInfo registry A/B setting help isolate further defects without random latency tuning. See [ASIO timeline correction](docs/ASIO_TIMELINE_FIX.md).
