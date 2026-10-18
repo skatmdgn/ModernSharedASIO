@@ -155,3 +155,7 @@ Three real user stop logs with 48k, 512 ASIO, WASAPI 480 period, 1056 device buf
 ## Phase 3 source instrumentation (2026-10-18)
 
 On previously reported default 1024-frame Cubase run, 76.043s with max callback 18608us and 3 overruns produced 0 missing frames. Added histogram / consecutive overbudget / WASAPI sampled queue occupancy and client stream latency estimate; no PCM changes. Standalone C++ Clang ASan/UBSan and GCC Release tests PASS. Complete Windows MSVC/19 CTests and real Cubase behavior NOT TESTED. Stable source branch stable/cubase8-phase2-1024-confirmed. docs/OPTIMIZATION_PHASE3_LOAD_TELEMETRY.md.
+
+## 2026-10-18 real startup race telemetry and experimental wake mode
+
+User provided two new-format short all-silent logs: 1.509s had 480-frame underrun exactly once at WASAPI render event1 (no host callback exceeded 135us); 14.299s had no underrun and FIFO min1024. Driver source signals producer only after render_.start returns, when client->Start has already occurred. Added opt-in EarlyProducerWake before render.start only in experiment/startup-producer-early-wake, main remains unchanged. Windows A/B and 20-CTest pending. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.

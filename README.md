@@ -153,3 +153,7 @@ User's phase-2 log confirms 100% native Float32 direct WASAPI rendering and func
 ### Phase 3: high-load telemetry (2026-10-18)
 
 Added Cubase ASIO callback histogram, consecutive over-budget streak and sampled WASAPI FIFO pressure to stop diagnostics, without changing PCM, buffer sizes or ASIO double-buffer handling. New portable tests pass Clang ASan/UBSan and GCC Release, but full Windows tests (19) and Cubase runtime on new DLL remain pending. See docs/OPTIMIZATION_PHASE3_LOAD_TELEMETRY.md.
+
+### Startup first-event underrun timing experiment (separate branch)
+
+`experiment/startup-producer-early-wake` implements optional HKCU `EarlyProducerWake=1` to request Cubase DSP **before** WASAPI initialises, instead of only after WASAPI `Start` returns. The stable main default remains unchanged. Motivated by a real all-silent 1.509s Cubase run with exactly one first render-event 480-frame underrun and otherwise short (<135us) host callbacks. Deterministic opposite-ASIO-half FIFO test added. Actual Windows startup/Cubase A/B unverified. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.

@@ -105,6 +105,19 @@ std::uint32_t configured_queue_target_blocks() noexcept {
     return valid?value:2;
 }
 
+// Opt-in startup timing experiment. The proven stable default is OFF.
+bool configured_early_producer_wake() noexcept {
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\ModernSharedASIO",
+                     0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;
+    DWORD value=0,type=0,bytes=sizeof(DWORD);
+    const bool on=RegQueryValueExW(
+        key,L"EarlyProducerWake",nullptr,&type,
+        reinterpret_cast<BYTE*>(&value),&bytes)==ERROR_SUCCESS &&
+        type==REG_DWORD && bytes==sizeof(DWORD) && value==1;
+    RegCloseKey(key);
+    return on;
+}
 bool configured_disable_time_info() noexcept {
     // The physical IAudioClock-to-ASIOTime mapping is not validated for Cubase.
     // Do not advertise ASIO TimeInfo by default until it is calibrated.
@@ -198,6 +211,7 @@ public:
         latency_queries_.store(0);
         last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
+        early_producer_wake_=configured_early_producer_wake();
         queue_target_frames_=configured_queue_target_blocks()*
             static_cast<std::size_t>(kFrames);
         callback_timeline_.reset();
@@ -221,6 +235,11 @@ public:
         // Protect buffer state before the audio engine can start rendering.
         playing_.store(true,std::memory_order_release);
         start_wall_ns_=qpc_ns();
+        // Experimental early DSP wake. Still uses the producer worker and
+        // outputs ONLY the opposite ASIO half, exactly as normal operation.
+        // WASAPI has not started yet, so there is no first render deadline.
+        if(early_producer_wake_ && producer_wake_event_)
+            SetEvent(producer_wake_event_);
         auto hr=render_.start(requested_period_ms_);
         if(FAILED(hr)){
             render_.stop();
@@ -236,7 +255,7 @@ public:
             put_text(error_,"Device mix sample rate changed; reload driver",sizeof(error_));
             return ASE_NoClock;
         }
-        // Wake DSP producer for the next render event.
+        // Keep the existing post-initialization notification for both modes.
         if(producer_wake_event_)SetEvent(producer_wake_event_);
         return ASE_OK;
     }
@@ -528,7 +547,7 @@ private:
             "render_queue_samples=%llu render_queue_min_frames=%llu "
             "render_queue_max_frames=%llu render_queue_below_demand_events=%llu "
             "render_queue_first_low_event=%llu "
-            "wasapi_stream_latency_100ns=%llu\n",
+            "wasapi_stream_latency_100ns=%llu early_producer_wake=%u\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_.load()),
             static_cast<unsigned long long>(max_callback_us_.load()),
@@ -581,7 +600,8 @@ private:
             static_cast<unsigned long long>(stats.render_queue_max_frames),
             static_cast<unsigned long long>(stats.render_queue_below_demand_events),
             static_cast<unsigned long long>(stats.render_queue_first_low_event),
-            static_cast<unsigned long long>(info.stream_latency_100ns));
+            static_cast<unsigned long long>(info.stream_latency_100ns),
+            early_producer_wake_?1u:0u);
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -590,6 +610,7 @@ private:
     }
     std::atomic<ULONG> ref_{1};
     std::uint32_t requested_period_ms_{5};
+    bool early_producer_wake_{false};
     std::size_t queue_target_frames_{2*static_cast<std::size_t>(kFrames)};
     std::atomic<std::uint64_t> callback_count_{0};
     modern_asio::CallbackTimingTracker callback_timings_{};

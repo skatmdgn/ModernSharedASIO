@@ -148,3 +148,7 @@ User reported another three stop logs after restoring default `audio_buffer_targ
 ### Optimization Phase 3 - instrument host DSP jitter and FIFO pressure (2026-10-18)
 
 With the default 1024 FIFO frame target a real 76s Cubase playback logged 0 underrun frames, despite 3 callback budget overruns and 18608us worst callback. Added host duration 8-bin histogram, longest consecutive overruns, min/max queued frames and below-demand snapshot events. Log includes estimated WASAPI client latency, without modifying Cubase latency report. Stable phase-2 source preserved in stable/cubase8-phase2-1024-confirmed. Standalone Clang ASan/UBSan and GCC Release tests passed; Windows 19 CTests and actual new-DLL performance pending. docs/OPTIMIZATION_PHASE3_LOAD_TELEMETRY.md.
+
+### 2026-10-18 intermittent startup FIFO race (experimental only)
+
+Real Cubase new telemetry: short 1.509s all-silent session had `first_underrun_render_event=1`, 480 missing frames, `render_queue_min_frames=0`, 138 host callbacks all <=500us, max135us. Longer 14.299s all-silent run had zero underruns and FIFO min 1024. Source only wakes Cubase DSP producer after `render_.start()` returns (when device already runs). Optional `EarlyProducerWake=1` now wakes before WASAPI init on separate `experiment/startup-producer-early-wake`, OFF by default and not merged. Risk host callbacks before device fully ready; Windows A/B required. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.
