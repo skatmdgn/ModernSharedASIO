@@ -56,3 +56,20 @@ clock_reads=62 device_ticks=1893448 frequency=384000 qpc_100ns=17700483987457
 - After user runs `git pull --ff-only` and manual Windows build, test with: `build-win\\Debug\\modern_asio_host_smoke.exe build-win\\Debug\\ModernSharedASIO.dll --tone` from repository directory.
 - Source currently awaiting user MSVC compilation and real playback. **Do not declare this test passed or Cubase compatibility based on the existing standalone WASAPI test.**
 
+
+## Verified registry-free ASIO host real-device audio (2026-10-18)
+
+The user reports that the 440Hz ASIO tone and YouTube played concurrently. The actual Windows host smoke output was:
+
+```text
+Registry-free ASIO host: rate=48000, block=512, channels=2, mode=bufferSwitch
+Quiet 440Hz ASIO tone for 5 seconds
+ASIO callbacks=472 invalid_buffers=0 sample_position_low=242176
+Registry-free ASIO host smoke: PASS
+```
+
+- **REGISTRY_FREE_ASIO_PLAYBACK_VERIFIED=true** for the tested legacy `bufferSwitch` mode at 48000Hz stereo, 512 frame blocks. This means IASIO init/createBuffers/start/host callbacks/stop/disposeBuffers passed and produced audible output.
+- Callback counter consistency: `472*512+512=242176` exactly equals returned sample position. The extra 512 is the driver's ASIO B-half pre-roll. It is not a measurement of acoustic or physical device-clock latency.
+- Host buffers validated: `invalid_buffers=0`. This manual host test did not measure actual xruns inside the ASIO renderer, audio latency, CPU load, or click/dropout statistics beyond user observation.
+- **CUBASE_8_0_40_VERIFIED=false**, **ASIO_TIMEINFO_VERIFIED=false** and **STUDIO_PERFORMANCE_A_B_VERIFIED=false**. The driver is still not installed/registered.
+- Next safe manual test: `modern_asio_host_smoke.exe <DLL> --tone --time-info` (no registry modifications); subsequently make a separate opt-in Cubase driver registration checklist with backup and reversal steps. The original Steinberg driver must not be modified.

@@ -33,3 +33,5 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 24. Windows WASAPI smoke 440Hz and simultaneous YouTube: **user reports audible output, IAudioClient3=1, errors=0; underrun_frames=960**. Investigate whether missing frames are startup/scheduler artifacts, not automatically audible Cubase failures.
 25. Manually run registry-free `modern_asio_host_smoke.exe <DLL> --tone` after recompiling. Verify IASIO::init, getChannels, getSampleRate, getBufferSize, createBuffers, start, bufferSwitch callbacks, stop, getSamplePosition, disposeBuffers. The program does not register the driver and is NOT an automatic CTest.
 26. Repeat ASIO host smoke with `--tone --time-info` for ASIO 2.x TimeInfo path. Record callback_count and error code; test YouTube concurrently. Use moderate speaker volume and close Cubase during tests.
+
+27. User successfully played registry-free ASIO stereo 440Hz using `bufferSwitch` mode with simultaneous YouTube: 472 callbacks, invalid_buffers=0, sample_position_low=242176 = 472*512+512. PASS. Repeat in ASIO TimeInfo mode prior to any Cubase registration; do not treat ASIO TimeInfo/Cubase as already validated.

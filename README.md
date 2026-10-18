@@ -1,6 +1,6 @@
 # ModernSharedASIO
 
-**Status: Windows x64 Debug DLL compiled and 9/9 tests passed; user confirmed audible standalone WASAPI output alongside YouTube (48kHz IAudioClient3, 500 render events, zero stream errors). ASIO callback playback and Cubase 8 remain UNTESTED. Do not install yet.**
+**Status: Windows x64 Debug DLL compiled and 9/9 tests passed; user confirmed audible standalone WASAPI output alongside YouTube (48kHz IAudioClient3, 500 render events, zero stream errors). ASIO legacy bufferSwitch playback was also user-verified concurrently with YouTube. ASIO TimeInfo mode and Cubase 8 remain UNTESTED. Do not install yet.**
 
 Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 
@@ -76,3 +76,22 @@ git pull --ff-only
 ```
 
 This executable is not part of automatic CTest; it is deliberately a manual test requiring an actual audio endpoint. Do not use regsvr32 or alter the original Steinberg driver. The source is new and has not yet been compiled by MSVC.
+
+### First registry-free IASIO playback confirmed on Windows
+
+User has now run `modern_asio_host_smoke.exe ... --tone` and confirms simultaneous audio with YouTube. Actual stdout:
+
+```text
+Registry-free ASIO host: rate=48000, block=512, channels=2, mode=bufferSwitch
+Quiet 440Hz ASIO tone for 5 seconds
+ASIO callbacks=472 invalid_buffers=0 sample_position_low=242176
+Registry-free ASIO host smoke: PASS
+```
+
+472 callback blocks × 512 frames + 512 prefilled frames = 242176, matching the reported sample position. This confirms **registry-free ASIO host playback via legacy bufferSwitch and WASAPI shared renderer** on the user's Windows machine. It does **not** establish Cubase compatibility, driver registration correctness, ASIO time-info callback operation, or real latency performance. Next manual check:
+
+```powershell
+.\build-win\Debug\modern_asio_host_smoke.exe .\build-win\Debug\ModernSharedASIO.dll --tone --time-info
+```
+
+No rebuild is needed for the second host smoke mode when the new host executable already exists. Do not register/install before this additional callback-path check and supervised registration procedure.

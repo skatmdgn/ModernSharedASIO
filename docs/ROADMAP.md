@@ -11,7 +11,8 @@
 - [x] M3 prototype — ASIO callbacks and double-buffer producer attached to WASAPI render worker; no independent periodic software timer.
 - [x] M1–M6 Windows **Debug x64 compilation + registry-free COM factory preflight** — user MSVC 19.44 / Windows SDK 10.0.26100 log confirms 9/9 CTest passed, HEAD `4a6a68eb`.
 - [x] Real Windows WASAPI shared playback **alongside YouTube** — audible stereo 440Hz test, 48kHz IAudioClient3, 500 events, zero stream errors (user console). 960 underrun frames merit further diagnosis.
-- [ ] Registry-free IASIO host playback: `modern_asio_host_smoke.exe` source prepared, awaiting Windows build and user real-device test.
+- [x] Registry-free IASIO host playback **VERIFIED on user's Windows machine**: legacy `bufferSwitch` 472 callbacks, 0 invalid buffers, valid `sample_position_low=242176`; 440Hz output and YouTube audible simultaneously.
+- [ ] ASIO `bufferSwitchTimeInfo` mode: run `modern_asio_host_smoke.exe <DLL> --tone --time-info` manually before registering for Cubase.
 - [ ] Windows Release x64 build and **Cubase 8.0.40+YouTube** runtime: NOT TESTED.
 - [x] M3 event pacing — ASIO blocks produced only when WASAPI output demands frames; bounded requests/no-progress guard.
 - [x] M3 simulation — 60,000 × 441-frame and 60,000 × 480-frame consumption events, verified conservation with sanitizers.
@@ -66,4 +67,4 @@ git pull --ff-only
 .\build-win\Debug\modern_asio_host_smoke.exe .\build-win\Debug\ModernSharedASIO.dll --tone
 ```
 
-Then optionally repeat with `--tone --time-info` to test ASIO 2.x bufferSwitchTimeInfo callbacks. Neither run writes Windows ASIO registry entries. This validates ASIO engine output directly before opting into any Cubase registration. **New host test not yet built or run on Windows.** See docs/WINDOWS_BUILD_LOG.md.
+Then optionally repeat with `--tone --time-info` to test ASIO 2.x bufferSwitchTimeInfo callbacks. Neither run writes Windows ASIO registry entries. This validates ASIO engine output directly before opting into any Cubase registration. **Follow-up: user built and ran the legacy bufferSwitch host, heard audio alongside YouTube, PASS. Time-info option still pending.** See docs/WINDOWS_BUILD_LOG.md.
