@@ -10,8 +10,11 @@
 #include <Windows.h>
 #include <Objbase.h>
 #include <avrt.h>
+#include <timeapi.h>
 #include "modern_asio/producer_fill_policy.hpp"
 #include "modern_asio/asio_callback_timeline.hpp"
+#include "modern_asio/asio_block_stamp.hpp"
+#include "modern_asio/asio_output_silence.hpp"
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <wrl/client.h>
@@ -51,6 +54,12 @@ std::uint64_t qpc_ns() noexcept {
     if(!QueryPerformanceCounter(&now)||!QueryPerformanceFrequency(&rate)||rate.QuadPart<=0)return 0;
     auto n=static_cast<std::uint64_t>(now.QuadPart),d=static_cast<std::uint64_t>(rate.QuadPart);
     return (n/d)*1000000000ULL+((n%d)*1000000000ULL)/d;
+}
+// ASIO SDK Windows systemTime is derived from timeGetTime (milliseconds).
+// A single ASIO block has one latched position/time pair, not a new timestamp
+// for each getSamplePosition query in that same block.
+std::uint64_t asio_system_clock_ns() noexcept {
+    return static_cast<std::uint64_t>(timeGetTime()) * 1000000ULL;
 }
 void put_text(char* dest,const char* value,std::size_t max) noexcept {
     if(dest && max) std::snprintf(dest,max,"%s",value);
@@ -171,6 +180,7 @@ public:
         last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
         callback_timeline_.reset();
+        callback_stamp_.publish({0,asio_system_clock_ns()});
         buffer_index_=0;
         // ASIO host can prefill output half B before start.
         const auto initial=bridge_.submit(active_[0]?planar_[0][1].data():nullptr,
@@ -259,7 +269,10 @@ public:
     ASIOError setClockSource(long i) override {return i==0?ASE_OK:ASE_InvalidParameter;}
     ASIOError getSamplePosition(ASIOSamples* samples,ASIOTimeStamp* clock) override {
         if(!samples||!clock)return ASE_InvalidParameter;
-        write64(*samples,callback_timeline_.current());write64(*clock,qpc_ns());
+        modern_asio::AsioBlockStamp pair{};
+        if(!callback_stamp_.read(pair))return ASE_HWMalfunction;
+        write64(*samples,pair.frame);
+        write64(*clock,pair.system_time_ns);
         return ASE_OK;
     }
     ASIOError getChannelInfo(ASIOChannelInfo* info) override {
@@ -289,7 +302,7 @@ public:
         disable_time_info_=configured_disable_time_info();
         time_info_=!disable_time_info_ && cb->asioMessage && cb->bufferSwitchTimeInfo &&
             cb->asioMessage(kAsioSupportsTimeInfo,0,nullptr,nullptr)==1;
-        callback_timeline_.reset();buffer_index_=0;prepared_=true;return ASE_OK;
+        callback_timeline_.reset();callback_stamp_.publish({0,0});buffer_index_=0;prepared_=true;return ASE_OK;
     }
     ASIOError disposeBuffers() override {
         if(playing_)return ASE_InvalidMode;
@@ -357,6 +370,15 @@ private:
         // Only the ASIO producer thread calls Cubase host callbacks.
         if(!prepared_||!callbacks_)return false;
         const long index=buffer_index_;
+        const auto block_frame=callback_timeline_.current();
+        const auto block_stamp_ns=asio_system_clock_ns();
+        callback_stamp_.publish({block_frame,block_stamp_ns});
+        // Before every ASIO callback scrub the reused output half so an
+        // empty/deferred Cubase processing pass cannot replay older PCM.
+        modern_asio::clear_asio_output_planes(
+            active_[0]?planar_[0][index].data():nullptr,
+            active_[1]?planar_[1][index].data():nullptr,
+            static_cast<std::size_t>(kFrames));
         const auto start_ns=qpc_ns();
         try {
             if(time_info_ && callbacks_->bufferSwitchTimeInfo){
@@ -364,8 +386,8 @@ private:
                 time.timeInfo.speed=1.;
                 time.timeInfo.sampleRate=static_cast<double>(rate_);
                 time.timeInfo.flags=kSystemTimeValid|kSamplePositionValid|kSampleRateValid;
-                write64(time.timeInfo.samplePosition,callback_timeline_.current());
-                write64(time.timeInfo.systemTime,qpc_ns());
+                write64(time.timeInfo.samplePosition,block_frame);
+                write64(time.timeInfo.systemTime,block_stamp_ns);
                 callbacks_->bufferSwitchTimeInfo(&time,index,ASIOTrue);
             } else {
                 callbacks_->bufferSwitch(index,ASIOTrue);
@@ -432,6 +454,11 @@ private:
             return false;
         }
         callback_timeline_.complete_callback(static_cast<std::uint32_t>(kFrames));
+        // Between callbacks return the next block boundary with its projected
+        // timestamp, instead of a timestamp which drifts while frame stays fixed.
+        const auto next_stamp=block_stamp_ns +
+            static_cast<std::uint64_t>(kFrames)*1000000000ULL/(rate_?rate_:1);
+        callback_stamp_.publish({callback_timeline_.current(),next_stamp});
         buffer_index_^=1;
         return true;
     }
@@ -529,6 +556,7 @@ private:
     long buffer_index_{0};
     std::atomic<std::uint64_t> callback_errors_{0};
     modern_asio::AsioCallbackTimeline callback_timeline_{};
+    modern_asio::AsioBlockStampChannel callback_stamp_{};
     std::array<std::array<std::vector<float>,2>,2> planar_{};
     ASIOCallbacks* callbacks_{nullptr};
     unsigned rate_{0};

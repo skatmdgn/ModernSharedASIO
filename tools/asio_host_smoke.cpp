@@ -38,6 +38,7 @@ struct HostState {
     std::atomic<unsigned long> legacy_callbacks{0};
     std::atomic<unsigned long> time_info_callbacks{0};
     std::atomic<unsigned long> bad_sample_positions{0};
+    std::atomic<unsigned long> inconsistent_stamp_pairs{0};
     std::atomic<unsigned long> bad_buffer_indices{0};
     std::atomic<unsigned long> first_callback_position{0xFFFFFFFFul};
     IASIO* driver{nullptr};
@@ -59,6 +60,14 @@ void buffer_switch(long half, ASIOBool) {
         if(host->driver->getSamplePosition(&position,&stamp)!=ASE_OK) {
             host->bad_sample_positions.fetch_add(1,std::memory_order_relaxed);
         } else {
+            // Must be one latched sample-position/system-time pair for the
+            // entire current callback, not time now with an unchanged frame.
+            ASIOSamples again{};
+            ASIOTimeStamp second{};
+            if(host->driver->getSamplePosition(&again,&second)!=ASE_OK ||
+               position.hi!=again.hi || position.lo!=again.lo ||
+               stamp.hi!=second.hi || stamp.lo!=second.lo)
+                host->inconsistent_stamp_pairs.fetch_add(1,std::memory_order_relaxed);
             const auto actual=(static_cast<std::uint64_t>(position.hi)<<32)|
                               static_cast<std::uint64_t>(position.lo);
             const auto expected=static_cast<std::uint64_t>(ordinal)*
@@ -111,6 +120,16 @@ ASIOTime* time_info(ASIOTime* time, long half, ASIOBool process) {
              static_cast<std::uint64_t>(time->timeInfo.samplePosition.lo)) : UINT64_MAX;
         if(actual!=expected)
             host->bad_sample_positions.fetch_add(1,std::memory_order_relaxed);
+        if(host->driver && time) {
+            ASIOSamples position{};
+            ASIOTimeStamp stamp{};
+            if(host->driver->getSamplePosition(&position,&stamp)!=ASE_OK ||
+               position.hi!=time->timeInfo.samplePosition.hi ||
+               position.lo!=time->timeInfo.samplePosition.lo ||
+               stamp.hi!=time->timeInfo.systemTime.hi ||
+               stamp.lo!=time->timeInfo.systemTime.lo)
+                host->inconsistent_stamp_pairs.fetch_add(1,std::memory_order_relaxed);
+        }
     }
     buffer_switch(half, process);
     return time;
@@ -256,10 +275,12 @@ int wmain(int argc, wchar_t** argv) {
                     host.first_callback_position.load(std::memory_order_relaxed),
                     host.bad_sample_positions.load(std::memory_order_relaxed),
                     host.bad_buffer_indices.load(std::memory_order_relaxed));
-        std::printf("Host callback mode observed: legacy=%lu timeInfo=%lu (requested_timeInfo=%d)\n",
+        std::printf("Host callback mode observed: legacy=%lu timeInfo=%lu "
+                    "(requested_timeInfo=%d), inconsistent_stamp_pairs=%lu\n",
                     host.legacy_callbacks.load(std::memory_order_relaxed),
                     host.time_info_callbacks.load(std::memory_order_relaxed),
-                    host.supports_time_info?1:0);
+                    host.supports_time_info?1:0,
+                    host.inconsistent_stamp_pairs.load(std::memory_order_relaxed));
         const auto expected_samples=static_cast<std::uint64_t>(host.callbacks.load())*
             static_cast<std::uint64_t>(preferred);
         const auto actual_samples=(static_cast<std::uint64_t>(samples.hi)<<32)|
@@ -267,6 +288,7 @@ int wmain(int argc, wchar_t** argv) {
         if (status!=ASE_OK || host.callbacks.load()==0 ||
             (host.legacy_callbacks.load()+host.time_info_callbacks.load())!=host.callbacks.load() ||
             host.invalid_buffers.load()!=0 || host.bad_sample_positions.load()!=0 ||
+            host.inconsistent_stamp_pairs.load()!=0 ||
             host.bad_buffer_indices.load()!=0 ||
             host.first_callback_position.load()!=0 ||
             actual_samples!=expected_samples) {
