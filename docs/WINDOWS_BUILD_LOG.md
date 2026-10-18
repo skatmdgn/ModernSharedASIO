@@ -164,3 +164,8 @@ User provided two new-format short all-silent logs: 1.509s had 480-frame underru
 ## 2026-10-18 EarlyProducerWake=1 actual Cubase 3-run evidence
 
 48k/512 ASIO, 1024 FIFO, WASAPI period480, direct Float32 all output. Older-format silent 14.659-second log lacks the early_wake flag and cannot be attributed to experiment. Among the 2 explicit ON runs, music 48.420s: 4538 callbacks, mean788us, max23072us, over-budget4, longest streak1, 480 frame underruns in 2 events (largest384), first at render event276, queue min96, output data always direct. Brief 128ms run: no underrun, last reported latency1024 rather than2080 in other sessions. No first-event underrun observed. Experiment not proven causal without OFF/ON same load. getLatencies dynamic provisional return 1024 before renderer buffer info and 2080 after; log confirms code path possible. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.
+
+
+## 2026-10-18 verified OFF-mode Cubase playback (all-silent)
+
+New user ASIO_STOP explicitly `early_producer_wake=0`: 23.949s wall, 2244 ASIO callbacks, all 2244 host PCM blocks silent, max callback 5509us, mean 102us, 0 overbudget, 2391 WASAPI events, no queue pressure (FIFO min1024/max1504), 0 missed frames / 0 underrun events, 0 stream/callback errors, all 1148736 frames through native float32 output. This is a successful OFF-mode idle session, NOT a matched high-load A/B against prior ON music run (480 missed PCM frames under max 23072us callback). Maintain experiment isolated and default OFF. See docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.

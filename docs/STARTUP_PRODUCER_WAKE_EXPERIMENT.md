@@ -79,3 +79,26 @@ Interpretation: **there were no first-event underruns in the TWO runs that expli
 **New separate correctness concern surfaced:** user run 3 had `last_reported_latency_frames=1024` whereas runs 1 and 2 had 2080. Source `getLatencies()` returns `2*kFrames + render_.device_info().buffer_frames`: before the renderer publishes device info, its buffer_frames=0 so value=1024; after initialization it equals 1056 so returns 2080. Thus the ASIO host can observe different provisional latencies depending on request timing. Not evidence of physical latency changing. Do not silently change the value in this startup branch; address with a separate deliberate hardware/reporting contract investigation.
 
 **Decision:** keep experiment isolated; retain known-good main and phase-2 stable branch. Continue only with matched repeated OFF/ON tests before promoting early wake, and separately investigate a stable, defensible getLatencies contract.
+
+## OFF-mode user run: 2026-10-18, verified EarlyProducerWake=0
+
+The next user-provided ASIO_STOP row explicitly logs **`early_producer_wake=0`**, unlike the older-format ambiguous row:
+
+| Metric | OFF-mode run |
+| --- | ---: |
+| Wall duration | 23,949ms |
+| ASIO callbacks | 2,244 |
+| Host PCM blocks | 2,244 silent; 0 nonzero |
+| Average / max host callback | 102us / 5,509us |
+| Callback deadline overruns | 0 |
+| Callback histogram <=0.5ms, <=1ms, <=2ms, <=4ms, <=8ms, <=12ms, <=20ms, >20ms | 2235, 6, 0, 2, 1, 0, 0, 0 |
+| FIFO target / sampled min / sampled max | 1024 / 1024 / 1504 frames |
+| WASAPI render events / queue below-demand observations | 2391 / 0 |
+| Missing PCM frames / underrun events | **0 / 0** |
+| PCM format path | all 1,148,736 WASAPI submitted frames use native float32 direct output |
+| Stream / callback / producer errors | 0 / 0 / 0 |
+| ASIO reported provisional latency | 2,080 frames |
+
+**Inference:** in at least one explicit OFF-mode, ~24-second *all-silent* Cubase run, default startup order worked without initial or subsequent underruns, while the ASIO callback was well below its 10.667ms budget. This does **not** disprove an intermittent startup race: an earlier OFF-path, 1.509-second all-silent run logged exactly one first-render-event deficit of 480 frames. It also does **not** establish that OFF beats ON: the explicit ON music run had 480 missing frames in 2 later events starting at event 276 and Cubase max callback 23.072ms, i.e. a different load. The explicit ON short silent run had no underrun; the older 14.659s silent row does not identify ON/OFF because its log lacks the flag.
+
+**Decision:** no production change or main merge. Keep `EarlyProducerWake` OFF by default. Next discriminating run must use the SAME actual audio-producing/VST project with same audio settings for repeated OFF and ON runs, preferably >=60s each, plus multiple fresh-start no-music tests for event1 misses. Record `underrun_frames`, `underrun_events`, `first_underrun_render_event`, `render_queue_min_frames`, `cb_time_hist...`, max callback time, and `early_producer_wake`. One OFF no-dropout run is positive stability evidence, not proof of a completed A/B.

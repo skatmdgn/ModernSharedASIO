@@ -157,3 +157,8 @@ Real Cubase new telemetry: short 1.509s all-silent session had `first_underrun_r
 ### EarlyProducerWake=1 first real user test (2026-10-18)
 
 User pasted 3 records, but 14.659s all-silent log lacks the EarlyProducerWake field and is from an older DLL. Only 2 records explicitly show ON. Loaded 48.420s: 480 missing PCM frames across 2 render events, first event number276, largest deficit384 frames, min FIFO96, Cubase callback max23072us with four over-budget callbacks and longest streak1; 128ms silent: 0 missing frames. The two loaded-run underruns were NOT first-event startup gaps. Unmatched experiment cannot prove EarlyProducerWake cures startup race or introduces runtime underrun; hold experiment only. Separate issue: ASIO getLatencies provisional calculation gives 1024 before renderer initialized vs2080 after because buffer_frames transitions 0->1056. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.
+
+
+### 2026-10-18 verified EarlyProducerWake OFF run
+
+Explicit OFF (`early_producer_wake=0`) user run for 23.949s generated 2244 all-silent host callbacks, avg102us/max5509us, zero callback overruns, 2391 WASAPI events, FIFO min1024/max1504, 0 queue-pressure or PCM missing frames and 0 backend errors. Native direct output 1148736/1148736 frames. Prior ON 48.42s active-music run lost 480 frames in 2 later events amid 23072us callback spike, but these runs are NOT workload matched. No change to default startup or main; repeat like-for-like A/B if warranted. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.
