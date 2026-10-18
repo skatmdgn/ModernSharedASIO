@@ -91,3 +91,7 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 
 68. Check if 480-frame missing PCM is restricted to first render event. All-silent 1.509s run had exact event1 480 missing frames, all 138 host callbacks <=500us, no DSP over budget. Longer 14.299s run zero underrun. Treat as startup producer-wake/device-start race candidate, not VST load proof.
 69. Experiment-only EarlyProducerWake DWORD=1 requests producer before render_.start; default OFF; rollback remove key and restart Cubase. Keep ASIO 512 and FIFO 1024. Compare repeated starts and exact first event underruns, plus full audio/MIDI correctness. Deterministic new early_prefill_handoff_tests tests opposite-half PCM and 480-frame FIFO order; Win32 scheduling unverified.
+
+
+70. EarlyProducerWake ON initial real Win/Cubase report: 3 sessions with no event1 deficits. Loaded 48.420-second session showed 480 missing frames over 2 events, max single deficit 384 frames, min FIFO 96 frames, first underrun render event276, 4 ASIO callbacks over budget, maximum 23072us. Do NOT confuse with startup-only underrun; require equivalent OFF/ON repeated runs to infer change. No real validation of sustained 0-underrun mode.
+71. Track separate latency contract issue: getLatencies() currently returns provisional 2*kFrames+render buffer_frames (1024 before WASAPI init, 2080 after 1056-frame device buffer available). This can yield different reported latencies per invocation. Review without changing optimized PCM or host timing arbitrarily; measure physical/audio-client latency first.

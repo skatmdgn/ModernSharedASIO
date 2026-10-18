@@ -159,3 +159,8 @@ On previously reported default 1024-frame Cubase run, 76.043s with max callback 
 ## 2026-10-18 real startup race telemetry and experimental wake mode
 
 User provided two new-format short all-silent logs: 1.509s had 480-frame underrun exactly once at WASAPI render event1 (no host callback exceeded 135us); 14.299s had no underrun and FIFO min1024. Driver source signals producer only after render_.start returns, when client->Start has already occurred. Added opt-in EarlyProducerWake before render.start only in experiment/startup-producer-early-wake, main remains unchanged. Windows A/B and 20-CTest pending. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.
+
+
+## 2026-10-18 EarlyProducerWake=1 actual Cubase 3-run evidence
+
+48k/512 ASIO, 1024 FIFO, WASAPI period480, direct Float32 all output. Silent 14.659-second run: 0 underruns, FIFO min1024. Music 48.420s: 4538 callbacks, mean788us, max23072us, over-budget4, longest streak1, 480 frame underruns in 2 events (largest384), first at render event276, queue min96, output data always direct. Brief 128ms run: no underrun, last reported latency1024 rather than2080 in other sessions. No first-event underrun observed. Experiment not proven causal without OFF/ON same load. getLatencies dynamic provisional return 1024 before renderer buffer info and 2080 after; log confirms code path possible. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.

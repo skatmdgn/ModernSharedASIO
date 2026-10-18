@@ -152,3 +152,8 @@ With the default 1024 FIFO frame target a real 76s Cubase playback logged 0 unde
 ### 2026-10-18 intermittent startup FIFO race (experimental only)
 
 Real Cubase new telemetry: short 1.509s all-silent session had `first_underrun_render_event=1`, 480 missing frames, `render_queue_min_frames=0`, 138 host callbacks all <=500us, max135us. Longer 14.299s all-silent run had zero underruns and FIFO min 1024. Source only wakes Cubase DSP producer after `render_.start()` returns (when device already runs). Optional `EarlyProducerWake=1` now wakes before WASAPI init on separate `experiment/startup-producer-early-wake`, OFF by default and not merged. Risk host callbacks before device fully ready; Windows A/B required. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.
+
+
+### EarlyProducerWake=1 first real user test (2026-10-18)
+
+User ran 3 sessions; no first-render event underrun occurred. All-silent 14.659s: 0 missing frames; loaded 48.420s: 480 missing PCM frames across 2 render events, first event number276, largest deficit384 frames, min FIFO96, Cubase callback max23072us with four over-budget callbacks and longest streak1; 128ms silent: 0 missing frames. The two loaded-run underruns were NOT first-event startup gaps. Unmatched experiment cannot prove EarlyProducerWake cures startup race or introduces runtime underrun; hold experiment only. Separate issue: ASIO getLatencies provisional calculation gives 1024 before renderer initialized vs2080 after because buffer_frames transitions 0->1056. docs/STARTUP_PRODUCER_WAKE_EXPERIMENT.md.
