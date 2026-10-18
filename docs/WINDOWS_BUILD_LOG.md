@@ -173,3 +173,7 @@ Local SIMD revised to bitwise NaN/Infinity exponent detection before FP comparis
 ## Optional scheduler gap experiment on optimization/full-pass-20261018
 
 Phase3 diagnosis adds opt-in EnableSchedulerProbe=1; collects producer wake gaps and WASAPI output event intervals in new ASIO_STOP fields, with QPC timing gated off by default. Local standalone Clang C++20 ASan+UBSan and GCC Release tests PASS (strict threshold, invalid tick, 100k concurrent snapshot). CMake Windows expected 26 CTests, full MSVC driver build and Cubase new-DLL trial NOT RUN. New read-only `scripts/summarize_asio_stops.ps1` is provided but not executed (no pwsh installed in local environment); user Windows validation pending. No audio payload/buffer/wake policy changes relative to full-pass baseline. docs/SCHEDULER_PROBE.md.
+
+## Output selection UI feature (2026-10-18; unmerged)
+
+Branch feature/output-device-picker exposes IASIO controlPanel device chooser for current Windows eRender endpoints; previously init and renderer were hardcoded to eConsole default. Reads/writes HKCU OutputDeviceId; when pinned headset is unplugged, do not redirect without asking user; companion `modern_asio_output_devices.exe` can reset selection. Uses `user32`, `propsys` and `advapi32` link libraries; expected CTest 27 including policy test. Portable policy Clang ASan/UBSan and GCC Release PASS, Win32 MSVC full DLL & dialog NOT TESTED, Cubase headphone routing NOT TESTED. docs/OUTPUT_DEVICE_SELECTION.md.

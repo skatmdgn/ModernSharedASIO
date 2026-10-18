@@ -167,3 +167,7 @@ SSE2 scanner exception safety: invalid NaN/Infinity lanes are identified using i
 ### Optional scheduler gap profiling (2026-10-18)
 
 The full-pass experimental branch supports opt-in DWORD `EnableSchedulerProbe=1`: records producer wake lag and WASAPI render event spacing, without changing ASIO/PCM or adding QPC calls while disabled. Added one portable regression (Clang ASan+UBSan and GCC Release PASS) and read-only PowerShell `scripts/summarize_asio_stops.ps1` for comparing sessions. Expected Windows CTests 26; full Windows build, pwsh script and real Cubase remain unverified. Details: [Scheduler probe](docs/SCHEDULER_PROBE.md).
+
+### Select a headset or speaker output (isolated feature branch)
+
+On `feature/output-device-picker`, Cubase IASIO Control Panel can enumerate active Windows render endpoints (headset, speakers, HDMI/USB) and pin the chosen device via HKCU OutputDeviceId. Default behavior is still Windows default output; unplugged pinned devices yield an error rather than silently switching speakers. Standalone `build-win\Debug\modern_asio_output_devices.exe` allows recovery outside Cubase. Reopen Cubase after changing choice. CMake expected CTests 27; Windows/MSVC and actual Cubase device routing **not yet verified**. See docs/OUTPUT_DEVICE_SELECTION.md.

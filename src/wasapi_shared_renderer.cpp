@@ -9,6 +9,7 @@
 #include "modern_asio/period_policy.hpp"
 #include "modern_asio/engine_demand.hpp"
 #include "modern_asio/float32_output_transfer.hpp"
+#include "modern_asio/output_device_selector.hpp"
 #include <audioclient.h>
 #include <avrt.h>
 #include <cmath>
@@ -211,7 +212,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
                                   IID_PPV_ARGS(devices.GetAddressOf()));
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ComPtr<IMMDevice> endpoint;
-    hr = devices->GetDefaultAudioEndpoint(eRender, eConsole, endpoint.GetAddressOf());
+    hr = resolve_output_endpoint(devices.Get(), endpoint.GetAddressOf());
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ComPtr<IAudioClient> client;
     hr = endpoint->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER,

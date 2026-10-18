@@ -166,3 +166,7 @@ SSE2 scan safety update: invalid NaN/Inf input is masked before ordered FP compa
 ### 2026-10-18 opt-in schedule profiling (full-pass optimization experiment only)
 
 Keep 512 ASIO + 1024 FIFO and main stable. Added `EnableSchedulerProbe` registry DWORD=1 (absent=OFF): capture estimated render->producer wake delay and inter-WASAPI event gap distributions. Probe OFF avoids additional QPC calls; opt-in makes timing observation possible before proposing MMCSS priority or buffer policy changes. One portable scheduler timing CTest added, expected Windows total 26; Linux Clang ASan+UBSan and GCC Release independent code test PASS. Added read-only PowerShell stop log table parser (not executable in local Linux). No PCM/timebase changes. docs/SCHEDULER_PROBE.md.
+
+### 2026-10-18 headset / output endpoint selector
+
+User reported inability to select newly connected headsets. Source only used GetDefaultAudioEndpoint in both init and rendering, and IASIO::controlPanel was ASE_NotPresent. New **isolated** feature/output-device-picker branch adds proper Win32 device selection dialog in Cubase, refresh button, saved HKCU OutputDeviceId, identical resolution in init and WASAPI, and a standalone GUI recovery launcher. Pinned-but-unavailable endpoint fails rather than silently redirect. No live hot-swap or main merge. Portable policy differential tests PASS under Clang ASan/UBSan and GCC Release; Windows count expected 27, full MSVC/Cubase NOT RUN. docs/OUTPUT_DEVICE_SELECTION.md.

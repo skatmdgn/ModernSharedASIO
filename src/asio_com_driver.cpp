@@ -38,6 +38,7 @@
 #include <vector>
 #include "modern_asio/asio_playback_bridge.hpp"
 #include "modern_asio/wasapi_shared_renderer.hpp"
+#include "modern_asio/output_device_selector.hpp"
 
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -173,7 +174,11 @@ public:
     ULONG STDMETHODCALLTYPE Release() override {
         auto n=ref_.fetch_sub(1)-1;if(!n)delete this;return n;
     }
-    ASIOBool init(void*) override {
+    ASIOBool init(void* sysRef) override {
+        // IASIO::init's host handle is used only as a dialog parent on the
+        // UI thread, never from either realtime audio callback thread.
+        if(sysRef && IsWindow(reinterpret_cast<HWND>(sysRef)))
+            host_window_=reinterpret_cast<HWND>(sysRef);
         if(initialized_)return ASIOTrue;
         // COM must stay initialized until all dependent interface pointers are released.
         struct CoGuard {
@@ -187,7 +192,7 @@ public:
         WAVEFORMATEX* fmt=nullptr;
         HRESULT hr=CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_INPROC_SERVER,
                                      IID_PPV_ARGS(e.GetAddressOf()));
-        if(SUCCEEDED(hr))hr=e->GetDefaultAudioEndpoint(eRender,eConsole,dev.GetAddressOf());
+        if(SUCCEEDED(hr))hr=modern_asio::resolve_output_endpoint(e.Get(),dev.GetAddressOf());
         if(SUCCEEDED(hr))hr=dev->Activate(__uuidof(IAudioClient),CLSCTX_INPROC_SERVER,nullptr,
                                           reinterpret_cast<void**>(client.GetAddressOf()));
         if(SUCCEEDED(hr))hr=client->GetMixFormat(&fmt);
@@ -195,7 +200,7 @@ public:
             rate_=fmt->nSamplesPerSec;initialized_=true;
         }
         CoTaskMemFree(fmt);
-        if(!initialized_)put_text(error_,"Windows shared stereo device unavailable",sizeof(error_));
+        if(!initialized_)put_text(error_,"Output device unavailable; connect headset or reset ASIO output selection",sizeof(error_));
         return initialized_?ASIOTrue:ASIOFalse;
     }
     void getDriverName(char* s) override {put_text(s,"Modern Shared Audio",32);}
@@ -361,7 +366,13 @@ public:
         for(auto& pair:planar_)for(auto& v:pair)v.clear();
         return ASE_OK;
     }
-    ASIOError controlPanel() override {return ASE_NotPresent;}
+    ASIOError controlPanel() override {
+        // A real Cubase ASIO Control Panel: select the Windows default or
+        // any attached render device. Restart Cubase after saving so host
+        // rate, device mix format and WASAPI thread all agree.
+        modern_asio::show_output_device_picker(host_window_);
+        return ASE_OK;
+    }
     ASIOError future(long,void*) override {return ASE_NotPresent;}
     ASIOError outputReady() override {
         // ASIOOutputReady optimization is NOT implemented. The driver copies
@@ -614,6 +625,7 @@ private:
         CloseHandle(file);
     }
     std::atomic<ULONG> ref_{1};
+    HWND host_window_{nullptr};
     std::uint32_t requested_period_ms_{5};
     bool scheduler_probe_enabled_{false};
     std::atomic<std::uint64_t> last_request_ticks_{0};
