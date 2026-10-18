@@ -79,16 +79,25 @@ std::uint32_t configured_period_ms() noexcept {
 }
 
 bool configured_disable_time_info() noexcept {
+    // The physical IAudioClock-to-ASIOTime mapping is not validated for Cubase.
+    // Do not advertise ASIO TimeInfo by default until it is calibrated.
+    // Explicit per-user EnableTimeInfo=1 opts in to experimental TimeInfo.
+    // DisableTimeInfo=1 still takes precedence for compatibility with tests.
     HKEY key=nullptr;
     if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\ModernSharedASIO",
-                     0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS) return false;
-    DWORD value=0,type=0,bytes=sizeof(value);
+                     0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS) return true;
+    DWORD enable=0,disable=0,type=0,bytes=sizeof(DWORD);
+    const bool enabled=
+        RegQueryValueExW(key,L"EnableTimeInfo",nullptr,&type,
+                         reinterpret_cast<BYTE*>(&enable),&bytes)==ERROR_SUCCESS &&
+        type==REG_DWORD && bytes==sizeof(DWORD) && enable==1;
+    type=0;bytes=sizeof(DWORD);
     const bool disabled=
         RegQueryValueExW(key,L"DisableTimeInfo",nullptr,&type,
-                         reinterpret_cast<BYTE*>(&value),&bytes)==ERROR_SUCCESS &&
-        type==REG_DWORD && bytes==sizeof(value) && value==1;
+                         reinterpret_cast<BYTE*>(&disable),&bytes)==ERROR_SUCCESS &&
+        type==REG_DWORD && bytes==sizeof(DWORD) && disable==1;
     RegCloseKey(key);
-    return disabled;
+    return !enabled||disabled;
 }
 
 void keep_max(std::atomic<std::uint64_t>& maximum,std::uint64_t value) noexcept {

@@ -35,6 +35,8 @@ struct HostState {
     bool supports_time_info{false};
     std::atomic<unsigned long> callbacks{0};
     std::atomic<unsigned long> invalid_buffers{0};
+    std::atomic<unsigned long> legacy_callbacks{0};
+    std::atomic<unsigned long> time_info_callbacks{0};
     std::atomic<unsigned long> bad_sample_positions{0};
     std::atomic<unsigned long> bad_buffer_indices{0};
     std::atomic<unsigned long> first_callback_position{0xFFFFFFFFul};
@@ -83,6 +85,10 @@ void buffer_switch(long half, ASIOBool) {
     }
     host->callbacks.fetch_add(1,std::memory_order_relaxed);
 }
+void legacy_switch(long half, ASIOBool process) {
+    if(g_host)g_host->legacy_callbacks.fetch_add(1,std::memory_order_relaxed);
+    buffer_switch(half,process);
+}
 void rate_changed(ASIOSampleRate) {}
 long asio_message(long selector, long value, void*, double*) {
     if (selector == kAsioEngineVersion) return 2;
@@ -95,6 +101,7 @@ long asio_message(long selector, long value, void*, double*) {
 }
 ASIOTime* time_info(ASIOTime* time, long half, ASIOBool process) {
     auto* host=g_host;
+    if(host) host->time_info_callbacks.fetch_add(1,std::memory_order_relaxed);
     if(host) {
         const auto ordinal=host->callbacks.load(std::memory_order_relaxed);
         const auto expected=static_cast<std::uint64_t>(ordinal)*
@@ -207,7 +214,7 @@ int wmain(int argc, wchar_t** argv) {
         host.outputs[1].isInput=ASIOFalse;
         host.outputs[1].channelNum=1;
         ASIOCallbacks callbacks{};
-        callbacks.bufferSwitch=&buffer_switch;
+        callbacks.bufferSwitch=&legacy_switch;
         callbacks.sampleRateDidChange=&rate_changed;
         callbacks.asioMessage=&asio_message;
         callbacks.bufferSwitchTimeInfo=&time_info;
@@ -249,11 +256,16 @@ int wmain(int argc, wchar_t** argv) {
                     host.first_callback_position.load(std::memory_order_relaxed),
                     host.bad_sample_positions.load(std::memory_order_relaxed),
                     host.bad_buffer_indices.load(std::memory_order_relaxed));
+        std::printf("Host callback mode observed: legacy=%lu timeInfo=%lu (requested_timeInfo=%d)\n",
+                    host.legacy_callbacks.load(std::memory_order_relaxed),
+                    host.time_info_callbacks.load(std::memory_order_relaxed),
+                    host.supports_time_info?1:0);
         const auto expected_samples=static_cast<std::uint64_t>(host.callbacks.load())*
             static_cast<std::uint64_t>(preferred);
         const auto actual_samples=(static_cast<std::uint64_t>(samples.hi)<<32)|
             static_cast<std::uint64_t>(samples.lo);
         if (status!=ASE_OK || host.callbacks.load()==0 ||
+            (host.legacy_callbacks.load()+host.time_info_callbacks.load())!=host.callbacks.load() ||
             host.invalid_buffers.load()!=0 || host.bad_sample_positions.load()!=0 ||
             host.bad_buffer_indices.load()!=0 ||
             host.first_callback_position.load()!=0 ||
