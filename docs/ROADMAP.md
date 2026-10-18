@@ -136,3 +136,7 @@ Working user-verified baseline preserved in `stable/cubase8-verified-20261018`. 
 ### Optimization phase 2 — WASAPI direct native Float32 render (2026-10-18)
 
 Added native stereo Float32 + asynchronous-source-only FIFO->WASAPI direct write, preserving staging for other device formats and synchronous sources. Removed one redundant scratch->device memcpy and common-case scratch allocation; logged native_direct_frames. Added 60k-case old-vs-new differential regression (Linux Clang ASan/UBSan PASS) and optional microbenchmark: 1056 frames staged 0.3095us vs direct 0.2173us, 1.425x within memory transfer ONLY. CMake expected Windows tests: 17, real Cubase and MSVC still pending. No ASIO double-buffer, block size or producer target changes. docs/OPTIMIZATION_PHASE2.md. Next measure end-to-end and optionally test 256 ASIO frames; keep stable branch.
+
+### Separate opt-in ASIO 256-frame experiment (2026-10-18)
+
+`experiment/asio-256-frames` branch only: read per-driver-instance DWORD AsioBlockFrames=256/512 (default512) and propagate through getBufferSize/createBuffers, planar allocations, callback DSP, A/B output, sample-position step and 2-block producer target. Portable ASan+UBSan 5k callbacks per mode and 200k WASAPI events for 4 combinations PASS; Windows 18-CTest and real Cubase xrun/latency tests PENDING. Never merge to main before 512 default regression and separate 256 A/B verification; preserve user-tested stable branch. docs/EXPERIMENT_256_ASIO.md.

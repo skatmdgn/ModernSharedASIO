@@ -139,3 +139,7 @@ No Win32 real-device builds or Cubase retests have been run yet for this commit.
 ## Phase 2 WASAPI direct render — local validation only (2026-10-18)
 
 Changed asynchronous native stereo Float32 renderer to FIFO.pop directly into IAudioRenderClient::GetBuffer output; all other formats still stage/convert through scratch. New native_direct_frames counter. Linux Clang 17 ASan+UBSan native differential: 60,000 random cases PASS; capacity-overflow device chunk PASS; prior SPSC and pacing tests rerun PASS. -O3 1056-frame microbenchmark staged 0.3095 us/call, direct 0.2173 us/call (1.425x memory-path). Do not extrapolate to Cubase latency/CPU. MSVC Windows test (17 CTests) and Cubase user acceptance pending. See docs/OPTIMIZATION_PHASE2.md.
+
+## Experimental ASIO 256-frame branch — local-only status (2026-10-18)
+
+Branch `experiment/asio-256-frames` from main phase2. Implemented opt-in DWORD AsioBlockFrames=256 (default 512). Propagated selected size consistently through host negotiation and producer timing while preserving reverse half-handoff. Local Clang 17 ASan+UBSan: 5000 callback blocks per mode and 200000 device events each combination (256/512 x 441/480) PASS. MSVC Windows build and 18 CTests NOT YET RUN, Cubase MIDI/VST and real latency/drops unknown. docs/EXPERIMENT_256_ASIO.md.

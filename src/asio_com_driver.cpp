@@ -40,7 +40,7 @@ constexpr CLSID kCLSID{0x6fa63f59,0xa581,0x4d9a,{0xb8,0xcb,0x73,0xc3,0xbd,0x3a,0
 constexpr wchar_t kCLSIDText[] = L"{6FA63F59-A581-4D9A-B8CB-73C3BD3A6D46}";
 constexpr wchar_t kAsioReg[] = L"SOFTWARE\\ASIO\\Modern Shared Audio";
 constexpr wchar_t kClassReg[] = L"Software\\Classes\\CLSID\\{6FA63F59-A581-4D9A-B8CB-73C3BD3A6D46}";
-constexpr long kFrames=512;
+constexpr long kDefaultFrames=512;
 HMODULE g_module=nullptr;
 std::atomic<long> g_objects{0},g_locks{0};
 
@@ -86,6 +86,22 @@ std::uint32_t configured_period_ms() noexcept {
         RegCloseKey(key);
     }
     return requested;
+}
+
+// Experimental per-user ASIO callback block size. This MUST be selected
+// before Cubase asks getBufferSize(), and never change midstream.
+// DWORD 256 is opt-in. The Cubase-tested default remains 512 frames.
+long configured_asio_block_frames() noexcept {
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\ModernSharedASIO",
+                     0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return kDefaultFrames;
+    DWORD value=0,type=0,bytes=sizeof(DWORD);
+    const bool valid=
+        RegQueryValueExW(key,L"AsioBlockFrames",nullptr,&type,
+                         reinterpret_cast<BYTE*>(&value),&bytes)==ERROR_SUCCESS &&
+        type==REG_DWORD && bytes==sizeof(DWORD) && (value==256 || value==512);
+    RegCloseKey(key);
+    return valid?static_cast<long>(value):kDefaultFrames;
 }
 
 // Keep the proven working two-block FIFO target by default. A one-block
@@ -134,7 +150,12 @@ void keep_max(std::atomic<std::uint64_t>& maximum,std::uint64_t value) noexcept 
 
 class Driver final : public IASIO {
 public:
-    Driver():render_(fifo_, &Driver::request_audio, this, kFrames, true),bridge_(fifo_) {g_objects.fetch_add(1);}
+    Driver():render_(fifo_, &Driver::request_audio, this, kDefaultFrames, true),bridge_(fifo_) {
+        // This IASIO instance retains one buffer size from getBufferSize()
+        // through createBuffers/start/stop; the opt-in override is read once.
+        block_frames_=configured_asio_block_frames();
+        g_objects.fetch_add(1);
+    }
     ~Driver(){stop();g_objects.fetch_sub(1);}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,void** ppv) override {
         if(!ppv)return E_POINTER;
@@ -197,7 +218,7 @@ public:
         last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
         queue_target_frames_=configured_queue_target_blocks()*
-            static_cast<std::size_t>(kFrames);
+            static_cast<std::size_t>(block_frames_);
         callback_timeline_.reset();
         callback_stamp_.publish({0,asio_system_clock_ns()});
         buffer_index_=0;
@@ -259,14 +280,14 @@ public:
         if(!in||!out)return ASE_InvalidParameter;
         *in=0;
         // Provisional bound only, not measured end-to-end latency.
-        *out=2*kFrames+static_cast<long>(render_.device_info().buffer_frames);
+        *out=2*block_frames_+static_cast<long>(render_.device_info().buffer_frames);
         latency_queries_.fetch_add(1,std::memory_order_relaxed);
         last_reported_latency_.store(*out,std::memory_order_relaxed);
         return ASE_OK;
     }
     ASIOError getBufferSize(long* min,long* max,long* preferred,long* step) override {
         if(!min||!max||!preferred||!step)return ASE_InvalidParameter;
-        *min=*max=*preferred=kFrames;*step=0;return ASE_OK;
+        *min=*max=*preferred=block_frames_;*step=0;return ASE_OK;
     }
     ASIOError canSampleRate(ASIOSampleRate x) override {
         return initialized_ && std::isfinite(x) && x==static_cast<double>(rate_)?ASE_OK:ASE_NoClock;
@@ -304,7 +325,7 @@ public:
     }
     ASIOError createBuffers(ASIOBufferInfo* info,long count,long frames,ASIOCallbacks* cb) override {
         if(!initialized_||prepared_||playing_)return ASE_InvalidMode;
-        if(!info||count<1||count>2||frames!=kFrames||!cb||!cb->bufferSwitch)return ASE_InvalidParameter;
+        if(!info||count<1||count>2||frames!=block_frames_||!cb||!cb->bufferSwitch)return ASE_InvalidParameter;
         bool selected[2]{false,false};
         for(long i=0;i<count;++i){
             const long c=info[i].channelNum;
@@ -312,7 +333,7 @@ public:
             selected[c]=true;
         }
         try {
-            for(long c=0;c<2;c++)for(long b=0;b<2;b++)planar_[c][b].assign(kFrames,0.0f);
+            for(long c=0;c<2;c++)for(long b=0;b<2;b++)planar_[c][b].assign(block_frames_,0.0f);
         } catch (...) {return ASE_NoMemory;}
         for(long i=0;i<count;i++)for(long b=0;b<2;b++)
             info[i].buffers[b]=planar_[info[i].channelNum][b].data();
@@ -376,7 +397,7 @@ private:
             }
             const auto planned=modern_asio::producer_blocks_to_fill(
                 fifo_.available_frames(),fifo_.capacity_frames(),
-                static_cast<std::size_t>(kFrames),
+                static_cast<std::size_t>(block_frames_),
                 queue_target_frames_,4);
             for(std::size_t i=0;i<planned;++i){
                 if(WaitForSingleObject(producer_stop_event_,0)==WAIT_OBJECT_0)
@@ -398,7 +419,7 @@ private:
         modern_asio::clear_asio_output_planes(
             active_[0]?planar_[0][index].data():nullptr,
             active_[1]?planar_[1][index].data():nullptr,
-            static_cast<std::size_t>(kFrames));
+            static_cast<std::size_t>(block_frames_));
         const auto start_ns=qpc_ns();
         try {
             if(time_info_ && callbacks_->bufferSwitchTimeInfo){
@@ -421,7 +442,7 @@ private:
         const auto block_ordinal=callback_count_.fetch_add(1,std::memory_order_relaxed);
         keep_max(max_callback_us_,callback_us);
         if(rate_ && callback_us >=
-            (static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_))
+            (static_cast<std::uint64_t>(block_frames_)*1000000ULL/rate_))
             over_budget_callbacks_.fetch_add(1,std::memory_order_relaxed);
 
         // Compare actual ASIO output data with what the host claims to play.
@@ -430,7 +451,7 @@ private:
         float left_peak=0.0f,right_peak=0.0f;
         const float* left=active_[0]?planar_[0][index].data():nullptr;
         const float* right=active_[1]?planar_[1][index].data():nullptr;
-        for(long f=0;f<kFrames;++f){
+        for(long f=0;f<block_frames_;++f){
             if(left){
                 const float v=left[f];
                 if(!std::isfinite(v))invalid_samples=true;
@@ -473,16 +494,16 @@ private:
         const long output_index=modern_asio::asio_output_half_for_callback(index);
         const auto accepted=bridge_.submit(
             active_[0]?planar_[0][output_index].data():nullptr,
-            active_[1]?planar_[1][output_index].data():nullptr,kFrames);
-        if(accepted!=kFrames){
+            active_[1]?planar_[1][output_index].data():nullptr,block_frames_);
+        if(accepted!=block_frames_){
             callback_errors_.fetch_add(1,std::memory_order_relaxed);
             return false;
         }
-        callback_timeline_.complete_callback(static_cast<std::uint32_t>(kFrames));
+        callback_timeline_.complete_callback(static_cast<std::uint32_t>(block_frames_));
         // Between callbacks return the next block boundary with its projected
         // timestamp, instead of a timestamp which drifts while frame stays fixed.
         const auto next_stamp=block_stamp_ns +
-            static_cast<std::uint64_t>(kFrames)*1000000000ULL/(rate_?rate_:1);
+            static_cast<std::uint64_t>(block_frames_)*1000000000ULL/(rate_?rate_:1);
         callback_stamp_.publish({callback_timeline_.current(),next_stamp});
         buffer_index_^=1;
         return true;
@@ -515,7 +536,7 @@ private:
             "first_nonzero_block=%llu last_nonzero_block=%llu "
             "asiodriver_wall_ms=%llu asio_callback_audio_ms=%llu "
             "wasapi_submitted_frames=%llu remaining_fifo_frames=%llu native_direct_frames=%llu\n",
-            rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
+            rate_,block_frames_,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_.load()),
             static_cast<unsigned long long>(max_callback_us_.load()),
             static_cast<unsigned long long>(over_budget_callbacks_.load()),
@@ -542,7 +563,7 @@ private:
             static_cast<unsigned long long>((qpc_ns()>=start_wall_ns_?
                     qpc_ns()-start_wall_ns_:0)/1000000ULL),
             static_cast<unsigned long long>(
-                    (callback_count_.load()*static_cast<std::uint64_t>(kFrames)*1000ULL)/
+                    (callback_count_.load()*static_cast<std::uint64_t>(block_frames_)*1000ULL)/
                     (rate_?rate_:1)),
             static_cast<unsigned long long>(stats.submitted_frames),
             static_cast<unsigned long long>(fifo_.available_frames()),
@@ -555,7 +576,8 @@ private:
     }
     std::atomic<ULONG> ref_{1};
     std::uint32_t requested_period_ms_{5};
-    std::size_t queue_target_frames_{2*static_cast<std::size_t>(kFrames)};
+    long block_frames_{kDefaultFrames};
+    std::size_t queue_target_frames_{2*static_cast<std::size_t>(kDefaultFrames)};
     std::atomic<std::uint64_t> callback_count_{0};
     std::atomic<std::uint64_t> max_callback_us_{0};
     std::atomic<std::uint64_t> over_budget_callbacks_{0};
