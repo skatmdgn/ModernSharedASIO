@@ -64,17 +64,17 @@ The new early-prefill data-order test was compiled and executed locally with Cla
 
 ## 2026-10-18 user on-Windows early wake ON actual logs
 
-First real Cubase data for this experimental branch: user enabled `EarlyProducerWake=1` and supplied 3 stop records, all on ASIO 512 frames, queue target 1024 frames, 48 kHz, WASAPI period 480, native stereo Float32 direct output:
+User supplied 3 stop records, but **ONLY TWO have the `early_producer_wake=1` key.** The first 14.659-second record lacks the new field and is an older DLL session, NOT proof of early-wake enabled. All use ASIO 512 frames, queue target 1024 frames, 48 kHz, WASAPI period 480 and native stereo Float32 direct output:
 
 | Run | Wall duration | Host PCM | Callback peak | Over-budget | Underrun frames / events | First underrun render event | Queue min |
 | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 | 14,659 ms | all silence | 712 us | 0 | 0 / 0 | none | 1024 frames |
+| 1, older DLL (early-wake unknown) | 14,659 ms | all silence | 712 us | 0 | 0 reported; event breakdown unavailable | not recorded | 1024 frames |
 | 2 | 48,420 ms | 3947 nonzero L/R callback blocks (591 silent) | 23,072 us | 4 | **480 / 2** | **276** | **96 frames** |
 | 3 | 128 ms | all silence | 95 us | 0 | 0 / 0 | none | 1024 frames |
 
 Loaded run 2: max per-event deficit 384 frames and total deficit 480 across exactly 2 events, so the other event missed **96 frames**. Callback timing histogram 405,3686,428,11,3,2,1,2 (sum=4538); callback mean 788us, longest consecutive over-budget streak 1 and first over-budget block ordinal 225. FIFO pressure occurred in 2 events, first at WASAPI render ordinal 276; native_direct_frames = submitted_frames = 2,322,816; no callback/backend errors.
 
-Interpretation: **there were no first-event underruns among these three starts**, consistent with the early wake potentially helping initialization. This does not prove elimination of an intermittent startup race. The 480 missing music-session frames occurred **later in playback**, not during the first event. Two isolated event deficits do not establish which precise VST callback or Windows scheduling gap caused them; over-budget host callback activity makes workload/scheduling a plausible candidate. Audio monitoring subjective status was not explicitly reported for this batch. The three sessions are not a controlled OFF-vs-ON A/B under identical load, so do not assert early wake causes better or worse steady-state playback.
+Interpretation: **there were no first-event underruns in the TWO runs that explicitly reported `EarlyProducerWake=1`**, consistent with early wake potentially helping initialization. However, the first log is from an older DLL and must NOT be included in the count of early-wake tests. Two starts do not prove elimination of an intermittent startup race. The 480 missing music-session frames occurred **later in playback**, not during the first event. Two isolated event deficits do not establish which precise VST callback or Windows scheduling gap caused them; over-budget host callback activity makes workload/scheduling a plausible candidate. Audio monitoring subjective status was not explicitly reported for this batch. The two explicit ON sessions and one older-version session are not a controlled OFF-vs-ON A/B under identical load, so do not assert early wake causes better or worse steady-state playback.
 
 **New separate correctness concern surfaced:** user run 3 had `last_reported_latency_frames=1024` whereas runs 1 and 2 had 2080. Source `getLatencies()` returns `2*kFrames + render_.device_info().buffer_frames`: before the renderer publishes device info, its buffer_frames=0 so value=1024; after initialization it equals 1056 so returns 2080. Thus the ASIO host can observe different provisional latencies depending on request timing. Not evidence of physical latency changing. Do not silently change the value in this startup branch; address with a separate deliberate hardware/reporting contract investigation.
 
