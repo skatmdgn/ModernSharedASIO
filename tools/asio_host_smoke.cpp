@@ -35,6 +35,10 @@ struct HostState {
     bool supports_time_info{false};
     std::atomic<unsigned long> callbacks{0};
     std::atomic<unsigned long> invalid_buffers{0};
+    std::atomic<unsigned long> bad_sample_positions{0};
+    std::atomic<unsigned long> bad_buffer_indices{0};
+    std::atomic<unsigned long> first_callback_position{0xFFFFFFFFul};
+    IASIO* driver{nullptr};
 };
 HostState* g_host = nullptr; // Assigned before ASIO start, cleared after stop/join.
 
@@ -43,6 +47,26 @@ void buffer_switch(long half, ASIOBool) {
     if (!host || (half != 0 && half != 1)) {
         if (host) host->invalid_buffers.fetch_add(1,std::memory_order_relaxed);
         return;
+    }
+    const auto ordinal=host->callbacks.load(std::memory_order_relaxed);
+    if(half != static_cast<long>(ordinal&1u))
+        host->bad_buffer_indices.fetch_add(1,std::memory_order_relaxed);
+    if(host->driver) {
+        ASIOSamples position{};
+        ASIOTimeStamp stamp{};
+        if(host->driver->getSamplePosition(&position,&stamp)!=ASE_OK) {
+            host->bad_sample_positions.fetch_add(1,std::memory_order_relaxed);
+        } else {
+            const auto actual=(static_cast<std::uint64_t>(position.hi)<<32)|
+                              static_cast<std::uint64_t>(position.lo);
+            const auto expected=static_cast<std::uint64_t>(ordinal)*
+                                static_cast<std::uint64_t>(host->block_frames);
+            if(!ordinal)
+                host->first_callback_position.store(
+                    static_cast<unsigned long>(position.lo),std::memory_order_relaxed);
+            if(actual!=expected)
+                host->bad_sample_positions.fetch_add(1,std::memory_order_relaxed);
+        }
     }
     auto* left = static_cast<float*>(host->outputs[0].buffers[half]);
     auto* right = static_cast<float*>(host->outputs[1].buffers[half]);
@@ -70,6 +94,17 @@ long asio_message(long selector, long value, void*, double*) {
     return 0;
 }
 ASIOTime* time_info(ASIOTime* time, long half, ASIOBool process) {
+    auto* host=g_host;
+    if(host) {
+        const auto ordinal=host->callbacks.load(std::memory_order_relaxed);
+        const auto expected=static_cast<std::uint64_t>(ordinal)*
+            static_cast<std::uint64_t>(host->block_frames);
+        const auto actual=time ? 
+            ((static_cast<std::uint64_t>(time->timeInfo.samplePosition.hi)<<32)|
+             static_cast<std::uint64_t>(time->timeInfo.samplePosition.lo)) : UINT64_MAX;
+        if(actual!=expected)
+            host->bad_sample_positions.fetch_add(1,std::memory_order_relaxed);
+    }
     buffer_switch(half, process);
     return time;
 }
@@ -169,6 +204,7 @@ int wmain(int argc, wchar_t** argv) {
         callbacks.asioMessage=&asio_message;
         callbacks.bufferSwitchTimeInfo=&time_info;
         g_host=&host;
+        host.driver=asio;
         auto status=asio->createBuffers(host.outputs,2,preferred,&callbacks);
         if (status!=ASE_OK) {
             print_error("IASIO::createBuffers",status);
@@ -196,12 +232,24 @@ int wmain(int argc, wchar_t** argv) {
         ASIOSamples samples{};
         ASIOTimeStamp stamp{};
         status=asio->getSamplePosition(&samples,&stamp);
-        std::printf("ASIO callbacks=%lu invalid_buffers=%lu sample_position_low=%lu\n",
+        std::printf("ASIO callbacks=%lu invalid_buffers=%lu sample_position_low=%lu "
+                    "first_callback_position=%lu bad_sample_positions=%lu "
+                    "bad_buffer_indices=%lu\n",
                     host.callbacks.load(std::memory_order_relaxed),
                     host.invalid_buffers.load(std::memory_order_relaxed),
-                    static_cast<unsigned long>(samples.lo));
+                    static_cast<unsigned long>(samples.lo),
+                    host.first_callback_position.load(std::memory_order_relaxed),
+                    host.bad_sample_positions.load(std::memory_order_relaxed),
+                    host.bad_buffer_indices.load(std::memory_order_relaxed));
+        const auto expected_samples=static_cast<std::uint64_t>(host.callbacks.load())*
+            static_cast<std::uint64_t>(preferred);
+        const auto actual_samples=(static_cast<std::uint64_t>(samples.hi)<<32)|
+            static_cast<std::uint64_t>(samples.lo);
         if (status!=ASE_OK || host.callbacks.load()==0 ||
-            host.invalid_buffers.load()!=0) {
+            host.invalid_buffers.load()!=0 || host.bad_sample_positions.load()!=0 ||
+            host.bad_buffer_indices.load()!=0 ||
+            host.first_callback_position.load()!=0 ||
+            actual_samples!=expected_samples) {
             std::puts("ASIO stream callback validation FAILED");
             break;
         }
