@@ -57,3 +57,7 @@ Remove-ItemProperty 'HKCU:\Software\ModernSharedASIO' -Name EarlyProducerWake -E
 ```
 
 Return to existing `main` or the user-verified stable phase-2 source if any regression. Original Steinberg ASIO DLL and registry untouched.
+
+## Local standalone C++ handoff check (2026-10-18)
+
+The new early-prefill data-order test was compiled and executed locally with Clang C++20 AddressSanitizer + UndefinedBehaviorSanitizer (`-O1 -g -fsanitize=address,undefined`) and GCC C++20 optimized (`-O3 -DNDEBUG`): both printed `early producer prefill preserves ASIO opposite-half PCM order: PASS`. The local build used the existing local phase-1 FIFO/bridge header copies and the small matching timeline/opposite-half headers; it is a portable **logic-path regression only**. The actual Windows DLL, OS event scheduling, Cubase playback and complete 20-CTest suite remain **unverified**.
