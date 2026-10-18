@@ -35,6 +35,7 @@ struct OutputStats {
     std::uint64_t clock_qpc_100ns{0};
     std::uint64_t clock_frequency{0};
     std::uint64_t submitted_frames{0};
+    HRESULT last_stream_hresult{S_OK};
 };
 
 // One owning control thread calls start()/stop(). Audio COM interfaces live only
@@ -88,6 +89,7 @@ private:
     std::atomic<std::uint64_t> clock_qpc_100ns_{0};
     std::atomic<std::uint64_t> clock_frequency_{0};
     std::atomic<std::uint64_t> submitted_frames_{0};
+    std::atomic<HRESULT> last_stream_hresult_{S_OK};
     ClockObservationChannel coherent_clock_{};
 };
 } // namespace modern_asio

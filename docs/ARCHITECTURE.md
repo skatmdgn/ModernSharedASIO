@@ -47,3 +47,9 @@ ASIO producer thread (MMCSS normal, event-driven)
 ```
 
 A newly introduced scheduling difference: FIFO starvation can still cause silence because the render worker never waits for Cubase. This is deliberate to protect Windows audio deadlines, and MUST be measured on hardware. The target of two ASIO blocks is provisional, not a measured optimum. Producer thread is joined before its events/buffers can be released. If the host callback hangs, stop may block indefinitely; do not call it production-safe. No Windows build/runtime test yet.
+
+## Batch 6 clock correlation
+
+A render-thread-only writer publishes one coherent `IAudioClock::GetPosition` observation (device ticks and paired QPC in 100ns) with the matching `GetFrequency`. A lock-free sequence/atomic channel prevents readers from combining different observations. Tick-to-frame conversion uses quotient and remainder with overflow guards; QPC converts to ASIO ns by ×100. Device positions are diagnostics only: they are **not** substituted into ASIO samplePosition, which requires a separate pre-roll/latency mapping. At present the renderer records `submitted_frames` and a final stream HRESULT for Windows troubleshooting.
+
+Do not mistake an exact numeric conversion for verified physical latency. Neither Windows nor Cubase execution occurred during this batch.

@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <random>
 #include <thread>
 #define CHECK(x) do {if(!(x)){std::cerr<<"FAIL "<<__LINE__<<" "<<#x<<"\n";std::abort();}}while(false)
 int main(){
@@ -19,6 +20,21 @@ int main(){
                                    std::numeric_limits<std::uint64_t>::max(),0},48000,value));
     CHECK(qpc_to_asio_nanoseconds(10000000,value) && value==1000000000ULL);
     CHECK(!qpc_to_asio_nanoseconds(std::numeric_limits<std::uint64_t>::max(),value));
+#if defined(__SIZEOF_INT128__)
+    // Portable MSVC implementation cross-checked against exact 128-bit
+    // arithmetic on Clang/GCC; Windows/MSVC retains the ordinary test set.
+    std::mt19937_64 rng(0x43AB671);
+    for(int i=0;i<100000;++i){
+        const std::uint64_t ticks=rng()%1000000000000000ULL;
+        const std::uint64_t freq=1+rng()%1000000000ULL;
+        const std::uint32_t rate=1+static_cast<std::uint32_t>(rng()%384000ULL);
+        const auto exact=(static_cast<unsigned __int128>(ticks)*rate)/freq;
+        const bool valid=exact<=std::numeric_limits<std::uint64_t>::max();
+        const bool computed=device_ticks_to_frames({ticks,freq,0},rate,value);
+        CHECK(valid==computed);
+        if(computed)CHECK(value==static_cast<std::uint64_t>(exact));
+    }
+#endif
     ClockObservationChannel channel;
     ClockObservation sample{};
     CHECK(!channel.read(sample));

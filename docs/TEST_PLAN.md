@@ -24,3 +24,8 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 17. Measure Windows producer callback duration and event→producer wake latency. Compare queue starvation and added 1024-frame target buffering to Batch4; do not assume lower latency than the old synchronous path.
 18. Verify no Cubase host callbacks occur on the WASAPI worker and that stop/join safely handles host callback timeouts/reentrancy. Run device unplug and teardown torture before registering the DLL.
 19. Run the Batch4 startup-isolation test, now added to CMake (it was present as source but not registered in the previous CTest list).
+
+20. New `modern_asio_clock_observation_tests`: verify coherent snapshot reads during 400,000 publications and 100,000 randomized clock conversion comparisons against exact 128-bit reference arithmetic (the reference loop is excluded on MSVC).
+21. Windows smoke: capture `coherent_played_frames`, `submitted_frames` and paired `qpc_ns`. Compare only valid S_OK IAudioClock readings; S_FALSE denotes degraded position precision.
+22. Verify `last_stream_hresult` on device removal, render failure and no-event timeout; don't assume every `producer_failures` counter means a Cubase DSP callback failed (in asynchronous mode it may indicate inability to signal the producer).
+23. Never use device frame offset directly as ASIO buffer samplePosition without establishing pre-roll/silence and output latency alignment; the current ASIO sample position is generated-frame-based and not calibrated to played frames.

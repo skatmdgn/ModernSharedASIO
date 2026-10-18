@@ -1,6 +1,6 @@
 # ModernSharedASIO
 
-**Status: Batch 5 isolated ASIO producer prototype; Windows compilation and Cubase 8 tests NOT DONE. Do not install.**
+**Status: Batch 6 coherent device-clock diagnostics and overflow-safe conversions; Windows compilation and Cubase 8 tests NOT DONE. Do not install.**
 
 Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 
@@ -18,6 +18,9 @@ Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 
 - Batch 5: move Cubase ASIO DSP callbacks to a separate MMCSS producer thread; WASAPI render worker only consumes the prefilled ring and posts a Win32 event to wake the producer.
 - Producer fills at most 2×512 frames ahead, with at most four block requests per wake. This changes the scheduling/latency trade-off and is not yet validated on hardware.
 - Fix missing CMake registration of the prior Batch 4 startup-isolation test; add 60,000-case randomized bounded-prefill policy unit test and 44.1/48k SPSC pacing simulation (idealized immediate wakeup).
+- Batch 6: coherent, paired IAudioClock device position / frequency / QPC (100ns) snapshots, exact overflow-checked conversion to stream frames / ASIO nanoseconds and submitted-versus-played diagnostic.
+- Store last renderer shutdown HRESULT for actual Windows runtime troubleshooting (e.g. audio event timeout and device invalidation).
+- Clock conversion validated on local Linux using 100,000 randomized exact 128-bit arithmetic references plus 400,000 concurrent clock publications. These are **portable tests only**.
 - Corrected COM lifetime ordering and 24 valid bit / 32-bit PCM container conversion.
 
 ## Build
@@ -47,4 +50,4 @@ No source or compiled binaries from the ASIO SDK are bundled. Refer to [SDK lice
 
 **Do not register the DLL or use it in Cubase yet**: Windows compilation and host/COM preflight are unverified. ASIO callbacks are now paced by WASAPI render-buffer demand. This is **not validated hardware clock synchronization**: device-clock sample-position mapping, measured latency, Cubase host callback timing and real underruns are still unresolved. Device loss, resampling, actual latency reporting, recording and installer also remain incomplete. Shared mode is the only implemented WASAPI mode; microphone/loopback capture not implemented.
 
-See [roadmap](docs/ROADMAP.md), [Batch 2 status](docs/BATCH2_STATUS.md), [architecture](docs/ARCHITECTURE.md), and [original evidence](docs/ORIGINAL_EVIDENCE.md).
+See [roadmap](docs/ROADMAP.md), [Batch 6 status](docs/BATCH6_STATUS.md), [Batch 2 status](docs/BATCH2_STATUS.md), [architecture](docs/ARCHITECTURE.md), and [original evidence](docs/ORIGINAL_EVIDENCE.md).

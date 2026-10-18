@@ -136,6 +136,7 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     clock_qpc_100ns_.store(0);
     clock_frequency_.store(0);
     submitted_frames_.store(0);
+    last_stream_hresult_.store(S_OK);
     coherent_clock_.reset_stopped();
     try {
         thread_ = std::thread([this, target_period_ms] { thread_main(target_period_ms); });
@@ -171,7 +172,7 @@ OutputStats WasapiSharedRenderer::stats() const noexcept {
     return {render_events_.load(), underrun_frames_.load(), errors_.load(),
             producer_failures_.load(),clock_reads_.load(),clock_device_position_.load(),
             clock_qpc_100ns_.load(),clock_frequency_.load(),
-            submitted_frames_.load()};
+            submitted_frames_.load(),last_stream_hresult_.load()};
 }
 bool WasapiSharedRenderer::read_clock_observation(ClockObservation& out) const noexcept {
     return coherent_clock_.read(out);
@@ -271,7 +272,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         // Device position units are clock-frequency ticks; QPC is 100ns.
         if (audio_clock && (++clock_sample_counter % 8u) == 0u) {
             UINT64 ticks = 0, qpc100ns = 0;
-            if (SUCCEEDED(audio_clock->GetPosition(&ticks, &qpc100ns))) {
+            if (audio_clock->GetPosition(&ticks, &qpc100ns)==S_OK && qpc100ns!=0) {
                 clock_device_position_.store(ticks, std::memory_order_relaxed);
                 clock_qpc_100ns_.store(qpc100ns, std::memory_order_relaxed);
                 coherent_clock_.publish({ticks,hardware_frequency,qpc100ns});
@@ -340,12 +341,20 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         if (wait == WAIT_OBJECT_0 + 1) {
             render_events_.fetch_add(1, std::memory_order_relaxed);
             hr = render_available(true);
-            if (FAILED(hr)) { errors_.fetch_add(1, std::memory_order_relaxed); break; }
+            if (FAILED(hr)) {
+                last_stream_hresult_.store(hr,std::memory_order_relaxed);
+                errors_.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
         } else if (wait == WAIT_TIMEOUT) {
-            errors_.fetch_add(1, std::memory_order_relaxed);
+            last_stream_hresult_.store(HRESULT_FROM_WIN32(ERROR_TIMEOUT),std::memory_order_relaxed);
+            errors_.fetch_add(1,std::memory_order_relaxed);
             break;
         } else {
-            errors_.fetch_add(1, std::memory_order_relaxed);
+            const auto error = wait==WAIT_FAILED
+                ? HRESULT_FROM_WIN32(GetLastError()) : E_UNEXPECTED;
+            last_stream_hresult_.store(error,std::memory_order_relaxed);
+            errors_.fetch_add(1,std::memory_order_relaxed);
             break;
         }
     }
