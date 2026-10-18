@@ -1,6 +1,6 @@
 # ModernSharedASIO
 
-**Status: Windows x64 Debug DLL compiled and 9/9 tests passed; user confirmed audible standalone WASAPI output alongside YouTube (48kHz IAudioClient3, 500 render events, zero stream errors). ASIO legacy bufferSwitch playback was also user-verified concurrently with YouTube. ASIO TimeInfo mode and Cubase 8 remain UNTESTED. Do not install yet.**
+**Status: Windows x64 Debug DLL compiled and 9/9 tests passed; user confirmed audible standalone WASAPI output alongside YouTube (48kHz IAudioClient3, 500 render events, zero stream errors). ASIO legacy bufferSwitch playback was also user-verified concurrently with YouTube. ASIO TimeInfo mode passed; Cubase 8 recognizes the driver and plays WAVs but VSTi performance/latency currently FAILS. Do not use for production.**
 
 Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 

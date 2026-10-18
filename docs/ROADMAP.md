@@ -13,8 +13,8 @@
 - [x] Real Windows WASAPI shared playback **alongside YouTube** — audible stereo 440Hz test, 48kHz IAudioClient3, 500 events, zero stream errors (user console). 960 underrun frames merit further diagnosis.
 - [x] Registry-free IASIO host playback **VERIFIED on user's Windows machine**: legacy `bufferSwitch` 472 callbacks, 0 invalid buffers, valid `sample_position_low=242176`; 440Hz output and YouTube audible simultaneously.
 - [x] ASIO `bufferSwitchTimeInfo` actual playback verified on Windows with YouTube: 471 callbacks, 0 invalid_buffers, 241664 frames (incl. 512 preroll).
-- [ ] Cubase 8.0.40 verification still pending; protected x64 registration and unregistration PowerShell scripts written but NOT EXECUTED.
-- [ ] Windows Release x64 build and **Cubase 8.0.40+YouTube** runtime: NOT TESTED.
+- [x] Cubase 8.0.40 accepts independent ASIO driver and can play WAV tracks (user observed). [ ] Real Cubase audio/VSTi quality: FAILED with high latency and missing/stuttering Serum output.
+- [ ] Windows Release x64 build NOT TESTED. Cubase 8.0.40 recognizes driver and outputs WAV tracks, but real-VST usability FAILED; stable YouTube coexistence during heavy VST not confirmed.
 - [x] M3 event pacing — ASIO blocks produced only when WASAPI output demands frames; bounded requests/no-progress guard.
 - [x] M3 simulation — 60,000 × 441-frame and 60,000 × 480-frame consumption events, verified conservation with sanitizers.
 - [x] M3 clock diagnostics source — periodic IAudioClock position, clock frequency and paired QPC (100ns units).
@@ -32,7 +32,7 @@
 
 - Portable clock tests: Linux Clang Debug ASan+UBSan and Release passed. Full registered CTest suite was not rerun. Native Windows build is still unavailable in this environment.
 - Windows Debug x64 compilation: **VERIFIED on user's PC** (DLL and 9/9 CTest, including registry-free COM preflight). Release build: NOT DONE.
-- WASAPI 440Hz actual speaker output + simultaneous YouTube: **USER VERIFIED** (basic standalone smoke). Cubase 8 ASIO playback: **NOT DONE**.
+- WASAPI 440Hz plus YouTube: USER VERIFIED. Cubase 8 ASIO WAV playback: USER VERIFIED with excessive latency. Cubase VSTi/Serum quality: FAILED.
 - No real-world audio improvement can be claimed yet. Source-written does NOT mean deployable.
 
 ## Windows build (Debug x64 successful; next step: actual playback smoke)
