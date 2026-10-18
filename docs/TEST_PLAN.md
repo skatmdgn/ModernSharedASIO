@@ -67,3 +67,5 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 
 49. New 100-callback ASIO handoff regression: prefill B with .25, callback 0 fills A with 1 and must output B .25; callback 1 fills B with 2 must output A 1; callback 2 fills A with 3 must output B 2. Continue for 100 calls, compare every output sample; this fails previous immediate-current-half driver policy.
 50. Windows CTest expected 14. With normal Cubase master-keyboard / Audio / drawn MIDI use, ensure stable live input AND restoration of sequenced playback + no future 24-bar content. No proof of cure until actual comparison.
+
+51. 2026-10-18 Cubase 8.0.40 on-user-PC acceptance: **user reports PASS** after double-buffer handoff commit d3d770b (“now everything plays correctly”). This closes the user-reported fresh-project Audio/MIDI regression for their environment, but no individual itemized validation output or Windows 14-CTest transcript was provided. Continue testing stop/start/seek, multiple plugin tracks, long duration, audio system changes and ASIO latency accuracy before any release classification.

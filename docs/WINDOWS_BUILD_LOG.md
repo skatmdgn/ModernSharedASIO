@@ -127,3 +127,7 @@ ModernSharedASIO active code audited against Cubase empty bar0/future bar16 audi
 ## Callback output half violation found, source correction (2026-10-18)
 
 Constant audio output of material ~24 bars later at Cubase bar0 contradicts earlier engine-idle drift hypothesis. The ASIO SDK bufferSwitch documentation and FlexASIO's working copy-to-device implementation require outputting the OTHER half, not same just-written `bufferSwitch` half. In ModernSharedASIO the code did the latter; fixed to opposite-half FIFO submit, removed eager B start enqueue (avoid double B), added 100-step distinct A/B host output regression. **Only source written; Windows 14 CTests and Cubase still pending.**
+
+## 2026-10-18 — user reports Cubase playback restored
+
+After the commit fixing ASIO alternating output-half semantics (d3d770b), the user confirmed “됐어! 이제 모든게 잘나와”. Previously observed fresh-project Audio bar-0 output of ~24-bars-ahead content, no programmed MIDI/VST note playback and normal live keyboard performance were the blocking context. Record a **user-observed playback PASS**, not an independently available CTest transcript or exhaustive hardware compatibility certification. Whether all 14 tests passed on this precise commit was not pasted into chat. Keep original driver registration unmodified.

@@ -124,3 +124,7 @@ Critical user update corrects previous symptom isolation: fresh 4/4 120 BPM Cuba
 ### 2026-10-18 fixed 24-bar offset and handoff contract bug
 
 User says audio ALWAYS plays the same 24 bars ahead in a new Cubase 120BPM project; programmed MIDI silent; live MIDI keyboard correct. No increasing-offset-with-wait evidence, and the idle-clock hypothesis is rejected. Official ASIO SDK and FlexASIO source confirm callback doubleBufferIndex marks the host-to-be-filled half, while hardware consumes the OPPOSITE one; our driver incorrectly submitted the same freshly filled half. Corrected alternate output handoff and removed redundant B preroll, adding distinct-content 100-callback unit test, Windows 14 CTests pending. One block mismatch alone cannot explain 48s, so Cubase outcome still unverified. See docs/ASIO_OUTPUT_HALF_HANDOFF.md.
+
+### 2026-10-18 — functional recovery confirmed by Cubase user
+
+**User reports all playback working after ASIO opposite-buffer handoff correction (commit d3d770b).** This supersedes earlier documentation that the initial 24-bar-ahead Audio and programmed MIDI/VST silence regressions remain present. Mark the *reported Cubase functional blocker* resolved on user's local configuration; do not mark driver production-ready. Remaining tasks are long-run stress, rate/device switch, unload/teardown, latency measurement and documented Windows 14-CTest results. See docs/ASIO_OUTPUT_HALF_HANDOFF.md.

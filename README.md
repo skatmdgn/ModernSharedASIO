@@ -133,3 +133,7 @@ User reports master-keyboard VSTi live notes trigger normally, whereas programme
 ### ASIO double-buffer output handoff correction (2026-10-18, Windows test pending)
 
 Official ASIO SDK `bufferSwitch` and reference FlexASIO require the OUTPUT hardware to consume the **opposite** half of the ASIO half Cubase starts writing. This driver mistakenly queued the just-written same half after callback. Changed to opposite half and removed duplicated startup B enqueue; added distinct-output-half, 100-callback FIFO regression. User's constant ~24-bar future-audio and silent sequenced MIDI are **not yet verified fixed** and may have another cause. Documentation: [ASIO_OUTPUT_HALF_HANDOFF](docs/ASIO_OUTPUT_HALF_HANDOFF.md). Original Steinberg DLL and registration unaffected.
+
+### Cubase 8.0.40 playback recovery — user-confirmed (2026-10-18)
+
+After correcting ASIO's alternating buffer handoff (the host fills the callback half while the device outputs the opposite half), plus eliminating redundant initial B enqueue, the user reported that **all playback is working**. This follows reproducible problems with fixed ~24-bar forward Audio-track source output and silent programmed MIDI/VST, while live master-keyboard notes played. This is a meaningful **on-user-machine functional confirmation**, not proof of general production readiness; comprehensive Windows test logs, multidevice testing, durability and measured latency remain outstanding. See [ASIO output handoff](docs/ASIO_OUTPUT_HALF_HANDOFF.md). Original Steinberg DLL not modified.

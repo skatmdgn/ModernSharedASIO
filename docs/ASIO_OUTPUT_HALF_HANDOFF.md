@@ -28,3 +28,11 @@ Independent working open-source ASIO host/driver reference FlexASIO (`dechamps/F
 - With this proven handoff fix compiled and re-tested in a copy of the clean project, if fixed 24-bar mismatch persists, next required engineering step is a bar-anchored PCM provenance trace at Cubase ASIO buffer delivery vs WASAPI submission, not more guessed timer changes. Preserve user evidence and stop recycling failed hypotheses.
 
 Status: source defect fixed and specialized unit test written; Cubase offset unresolved until real-device check.
+
+## 2026-10-18 — Cubase user confirms successful functional retest
+
+**USER-REPORTED PASS after commit d3d770b308b7055763da1d9c04900ed60d7e243e.** The user responded, “됐어! 이제 모든게 잘나와” (“It works! Now everything plays correctly”). This follows the previous clean-project repro: fixed ~24-bar forward Audio content, drawn MIDI/VST notes silent, and live controller VST working. The user says the audio output is now fully working after correcting the ASIO double-buffer handoff. That is meaningful on-machine acceptance evidence for Cubase 8.0.40; the exact separate item-by-item checks were not pasted, so treat the overarching PASS as user attestation, not independently reproduced instrumented tests.
+
+**Causal status:** the change most closely linked to recovery is the **opposite-half output handoff plus removal of redundant B prefill**, correcting a demonstrated ASIO SDK contract violation. These were applied together, so the improvement does not isolate the relative contribution of each edit. Source bug and observed behavior are strongly consistent, though an exact 24-bar displacement mechanism has not been mathematically demonstrated.
+
+**Still pending before a general release:** inspect a full Windows 14/14 CTest report and exact full-session logs for this commit; test stop/restart, sample rates, high track count and long-run resilience. Never claim those checks happened without results. Original Steinberg DLL remains unchanged.
