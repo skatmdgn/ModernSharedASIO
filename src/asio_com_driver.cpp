@@ -135,6 +135,8 @@ public:
         over_budget_callbacks_.store(0);
         max_callback_us_.store(0);
         producer_wakes_.store(0);
+        latency_queries_.store(0);
+        last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
         position_.store(0,std::memory_order_release);
         buffer_index_=0;
@@ -194,6 +196,8 @@ public:
         *in=0;
         // Provisional bound only, not measured end-to-end latency.
         *out=2*kFrames+static_cast<long>(render_.device_info().buffer_frames);
+        latency_queries_.fetch_add(1,std::memory_order_relaxed);
+        last_reported_latency_.store(*out,std::memory_order_relaxed);
         return ASE_OK;
     }
     ASIOError getBufferSize(long* min,long* max,long* preferred,long* step) override {
@@ -364,7 +368,8 @@ private:
             "max_host_callback_us=%llu callback_over_block_budget=%llu "
             "callback_errors=%llu producer_wakes=%llu wasapi_render_events=%llu "
             "underrun_frames=%llu stream_errors=%llu producer_failures=%llu "
-            "last_hr=0x%08lx audio_buffer_target_frames=%llu\n",
+            "last_hr=0x%08lx audio_buffer_target_frames=%llu "
+            "asio_time_info=%u latency_queries=%llu last_reported_latency_frames=%ld\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_.load()),
             static_cast<unsigned long long>(max_callback_us_.load()),
@@ -376,7 +381,10 @@ private:
             static_cast<unsigned long long>(stats.errors),
             static_cast<unsigned long long>(stats.producer_failures),
             static_cast<unsigned long>(stats.last_stream_hresult),
-            static_cast<unsigned long long>(2*kFrames));
+            static_cast<unsigned long long>(2*kFrames),
+            time_info_ ? 1u : 0u,
+            static_cast<unsigned long long>(latency_queries_.load()),
+            last_reported_latency_.load());
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -389,6 +397,8 @@ private:
     std::atomic<std::uint64_t> max_callback_us_{0};
     std::atomic<std::uint64_t> over_budget_callbacks_{0};
     std::atomic<std::uint64_t> producer_wakes_{0};
+    std::atomic<std::uint64_t> latency_queries_{0};
+    std::atomic<long> last_reported_latency_{0};
     modern_asio::SpscStereoRing fifo_{32768};
     modern_asio::WasapiSharedRenderer render_;
     modern_asio::AsioPlaybackBridge bridge_;
