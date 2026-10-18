@@ -39,3 +39,21 @@ New stop log fields are appended after existing fields, so old log parsers shoul
 ## Portable instrumentation verification
 
 After committing, the new `include/modern_asio/underrun_event_tracker.hpp` and `tests/underrun_event_tests.cpp` were compiled and executed locally under Clang C++20 (`-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -pthread`): **`Underrun event instrumentation PASS`**. This covers the standalone counter only, **NOT the Windows WASAPI integration, MSVC build, full 18-CTest suite, or Cubase performance**. The machine cannot directly clone GitHub due to DNS/network restrictions; the exact new portable source was separately compiled. All Windows checks remain outstanding.
+
+## Follow-up 2026-10-18: restoring the two-block queue produced zero reported underruns
+
+The user removed the QueueTargetBlocks=1 experimental override and supplied three new `ASIO_STOP` rows with `audio_buffer_target_frames=1024`, `asio_time_info=0`, `rate=48000`, `block_frames=512`, `engine_period_frames=480`, `wasapi_buffer_frames=1056`, and `native_direct_frames==wasapi_submitted_frames`.
+
+| Session | wall time | callbacks | host nonzero L/R blocks | maximum callback | over-budget callbacks | underrun frames | native direct / submitted |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A (no host PCM) | 16,750ms | 1,568 | 0/0 | 474us | 0 | 0 | 802,656 / 802,656 |
+| B (music) | **76,043ms** | **7,127** | **6,523/6,523** | **18,608us** | **3** | **0** | **3,648,576 / 3,648,576** |
+| C (short/no host PCM) | 142ms | 6 | 0/0 | 63us | 0 | 0 | 2,976 / 2,976 |
+
+All rows report `callback_errors=0`, `stream_errors=0`, `producer_failures=0`, `last_hr=0`, `host_invalid_float_blocks=0`. Session B host timeline advances `asio_callback_audio_ms=76021` over `asiodriver_wall_ms=76043`, consistent with correctly paced ASIO production; the full-session PCM totals do not pinpoint playback transport events. Max callback 18.608ms exceeds a single 512/48k block deadline of 10.667ms, but the buffered output did not underrun during this run. Crucially **the longer 76-second loaded music run at the default two-block setting achieved zero underrun frames**, whereas the earlier ~49-second one-block run reported 2976 missing frames.
+
+**Causal caveat:** the earlier one-block run also had a larger maximum host callback spike (30.371ms vs 18.608ms), so these are not rigorously matched loads. These records support the 1024-frame default as safer for this user's current environment, but do not establish that changing only the queue target eliminated underruns under identical DSP/scheduler load. Keep QueueTargetBlocks absent or set to 2; 512 low queue remains experimental.
+
+The fresh user logs **do not contain** `underrun_events`, `largest_underrun_event_frames`, or `first_underrun_render_event` fields introduced in later source revision `14febcd`. Thus the running registered Windows DLL is likely the earlier direct-render binary; this successful runtime test does NOT validate the latest event-instrumented Windows DLL, its 18 tests or those new counters. Do not assert the newer binary was deployed.
+
+Next targets: preserve known-good 512-frame ASIO block and 1024-frame queue, quantify worst-case Cubase VST/producer scheduler spikes, independently measure actual output latency, and test new read-only underrun diagnostics in Windows before any further attempt to lower buffer sizes. Reported output latency `2080` frames remains a provisional host-reporting value, not measured end-to-end latency.

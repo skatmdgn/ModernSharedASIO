@@ -147,3 +147,7 @@ Running binary confirmed native WASAPI direct for all 3 sessions. In busy 48.635
 ## UnderrunEventTracker portable build check (2026-10-18)
 
 The new standalone diagnostic header and C++ test were compiled with Clang C++20, AddressSanitizer+UndefinedBehaviorSanitizer and executed: `Underrun event instrumentation PASS`. Remote GitHub clone was unavailable in local shell due to DNS restrictions; this is only the portable test, not a Windows/MSVC build or Cubase verification. Full 18-CTest suite still pending.
+
+## Restored 1024-frame queue: user runtime test (2026-10-18)
+
+Three real user stop logs with 48k, 512 ASIO, WASAPI 480 period, 1056 device buffer and 1024 queue. Loaded run wall 76043ms, callback 7127, maximum host callback 18608us, over-budget 3, host nonzero blocks 6523, **underrun_frames=0**, submitted 3648576, direct native 3648576, remaining FIFO 1504. All host/backend stream errors zero, timeInfo disabled. Earlier experimental 512 queue result contained 2976 missed frames, 4 over-budget callbacks and a larger 30371us maximum callback: not identical workloads, so note correlation rather than proving queue-only causation. First and third runs produced host silence only and no underruns. User log omits event instrumentation keys added in `14febcd`, indicating earlier DLL still running, not test confirmation of source-only event tracker. See docs/CUBASE_PHASE2_UNDERRUN_REVIEW.md.

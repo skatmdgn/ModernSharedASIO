@@ -78,3 +78,7 @@ Expect nonzero `native_direct_frames` when Cubase opened a native float32 stereo
 ## Real Cubase session update — 2026-10-18
 
 User confirmed direct native Float32 output worked and sound was correct. All `native_direct_frames` equaled submitted frames. Crucially, `audio_buffer_target_frames=512` (experimental QueueTargetBlocks=1) with one loaded session yielding 2976 underrun frames across 48.635 seconds; callback max 30371us, 4 callback overruns. This **fails a zero-underrun stability gate** despite no audible issue. See [actual Cubase underrun review](CUBASE_PHASE2_UNDERRUN_REVIEW.md). Do not promote one-block mode as default. Event-level telemetry added; full Windows retest pending.
+
+## User follow-up: default 1024-frame target sustained loaded playback without underruns
+
+After restoring `audio_buffer_target_frames=1024`, 76.043s loaded Cubase session reported **underrun_frames=0** despite worst host callback 18.608ms and 3 callbacks exceeding the normal 10.67ms ASIO block deadline. 100% of 3648576 submitted frames took the native direct output path. With 512-target earlier, 2976 frames were missing over 48.635s, with a much larger worst host callback of 30.371ms. Evidence favors retaining 1024 default, but is not controlled DSP workload, so the queue setting is not conclusively the only cause. Source revision with event-based telemetry was NOT yet running (no new fields in logs). See docs/CUBASE_PHASE2_UNDERRUN_REVIEW.md.
