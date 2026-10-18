@@ -113,3 +113,7 @@ The ASIO SDK requires **samplePosition 0 at the first ASIO bufferSwitch after st
 ### Multi-track Cubase displacement: ASIOOutputReady contract corrected (pending Windows retest)
 
 User reports normal one-track output but greater delays, VST dropout and apparent ~16-bar timeline displacement as track count increases. A concrete ASIO SDK contract bug was found: our IASIO::outputReady() reported ASE_OK despite **not** implementing the asynchronous host-ready handshake. Fixed to ASE_NotPresent, and added COM/ASIO-host checks. This fix has **not yet been Windows built or Cubase verified**, and the 16-bar offset may have other causes. See [multi-track investigation](docs/CUBASE_MULTITRACK_OUTPUTREADY.md). Do not use the experimental driver for production.
+
+### Cubase regression still unresolved after ASIOOutputReady change
+
+User confirmed no improvement; recent logs show zero WASAPI underruns, 10ms actual shared period, with separate all-silent and part-nonzero host PCM sessions. Silence counters are whole-session aggregates (not proof of transport-time silence). The source has a potential unsynchronized `ASIOTimeInfo.systemTime`/physical device clock relationship and a host-reported latency change at renderer start. Next, isolate **ASIO-Guard OFF** then separately **TimeInfo OFF** using an existing HKCU diagnostic switch (no rebuild) before changing the engine again. See docs/CUBASE_CAUSAL_DIAGNOSIS.md. Current driver remains experimental and unusable for reliable multi-track Cubase work.

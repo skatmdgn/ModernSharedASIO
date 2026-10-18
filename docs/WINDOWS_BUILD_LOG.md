@@ -107,3 +107,7 @@ User four-stop logs: requested 5ms, actual 10ms engine at 48k, some runs with 0 
 ## Multi-track Cubase wrong source position — outputReady implementation defect (2026-10-18)
 
 Latest user report: single track normal; heavier track count produces increasing delay, stuttering/absent VSTi and apparently a ~16-bar future audio segment at bar 0. Source audit found `IASIO::outputReady()` incorrectly claiming optional support via ASE_OK without real async completion support, directly contradicting official ASIO 2.3 returns specification. Now ASE_NotPresent plus fail-fast preflight and mini-host contract checks. This is source-written only, not yet Windows compiled or Cubase-tested; 16 bars unverified as measured offset.
+
+## Regression persists despite corrected outputReady (2026-10-18)
+
+User reports NO improvement and supplies three stopped-session logs, all WASAPI underrun=0 and TimeInfo=1. Session one: 6417/6417 host blocks silent; second: 5341 callbacks, 3488 silent, 1853 nonzero; third: 5 silent blocks. Zero backend errors and outputReady contract fix therefore do not establish functional correctness. A stopped session may include transport idle; aggregate silence stats cannot locate failure at bar 0. Requested 5ms effective 480-frame/10ms, output latency last reported 2080 frames. No further untested source modifications: isolate Cubase ASIO-Guard and TimeInfo with one-at-a-time A/B (docs/CUBASE_CAUSAL_DIAGNOSIS.md).

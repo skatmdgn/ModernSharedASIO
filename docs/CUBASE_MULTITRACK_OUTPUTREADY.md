@@ -34,3 +34,7 @@ Official contract: https://github.com/audiosdk/asio/blob/main/common/asio.h (ASI
 ## Status
 
 CODE_FIX_WRITTEN=true; Windows build and tests after this fix NOT RUN; Cubase multi-track outcome UNKNOWN. Do not promise that incorrect outputReady is the sole root cause. Do not introduce arbitrary deep buffering or buffer-size changes pending evidence. The old Steinberg registration and DLL must remain intact. CI remains deferred.
+
+## Follow-up: outputReady change had no functional effect
+
+User's next three logs show zero WASAPI underruns and zero backend errors while the multi-track Cubase discrepancy persists. The correction was legitimate ASIO SDK compliance but **not** the actual proven root cause. All three sessions negotiated TimeInfo; no test with TimeInfo or ASIO-Guard OFF has been recorded. The host PCM silence/nonnull counts are aggregates only and cannot indicate when transport played or whether Cubase was stopped. A reproducible independent A/B gate is documented in docs/CUBASE_CAUSAL_DIAGNOSIS.md. Do not claim resolved.
