@@ -9,7 +9,8 @@
 - [x] M2 source — experimental 24-method IASIO interface, independent COM class factory and CLSID, exports/registration code, registry-free COM preflight program.
 - [x] M3 portable source — ASIO Float32 planar→interleaved stereo bridge, preallocated FIFO, buffer wrap/overflow tests.
 - [x] M3 prototype — ASIO callbacks and double-buffer producer attached to WASAPI render worker; no independent periodic software timer.
-- [ ] M1–M6 Windows build — Debug/Release x64 Windows SDK + external official ASIO SDK, fix compile/link errors, registry-free COM preflight and shared-mode smoke test.
+- [x] M1–M6 Windows **Debug x64 compilation + registry-free COM factory preflight** — user MSVC 19.44 / Windows SDK 10.0.26100 log confirms 9/9 CTest passed, HEAD `4a6a68eb`.
+- [ ] Windows **Release x64 build, actual WASAPI shared-mode smoke playback, and Cubase+YouTube runtime** — these have NOT been exercised.
 - [x] M3 event pacing — ASIO blocks produced only when WASAPI output demands frames; bounded requests/no-progress guard.
 - [x] M3 simulation — 60,000 × 441-frame and 60,000 × 480-frame consumption events, verified conservation with sanitizers.
 - [x] M3 clock diagnostics source — periodic IAudioClock position, clock frequency and paired QPC (100ns units).
@@ -26,10 +27,11 @@
 ## Verification discipline
 
 - Portable clock tests: Linux Clang Debug ASan+UBSan and Release passed. Full registered CTest suite was not rerun. Native Windows build is still unavailable in this environment.
-- Windows compilation: **NOT DONE**, Windows runtime: **NOT DONE**, Cubase 8: **NOT DONE**.
+- Windows Debug x64 compilation: **VERIFIED on user's PC** (DLL and 9/9 CTest, including registry-free COM preflight). Release build: NOT DONE.
+- WASAPI actual speaker output: **NOT DONE**. Cubase 8 and simultaneous YouTube: **NOT DONE**.
 - No real-world audio improvement can be claimed yet. Source-written does NOT mean deployable.
 
-## Windows build (MSVC compile attempt received; DLL blocked on C2375 before fix)
+## Windows build (Debug x64 successful; next step: actual playback smoke)
 
 ```powershell
 git clone https://github.com/audiosdk/asio C:\sdk\asio
@@ -50,4 +52,4 @@ Original reverse engineering reference (read-only): https://github.com/skatmdgn/
 
 ### First Windows user build: 2026-10-18
 
-Environment: Visual Studio 2022 MSVC 19.44.35228.0, Windows SDK 10.0.26100.0, Windows 11 10.0.22631. CMake configure/generate PASSED; WASAPI static library, `modern_asio_smoke.exe` and eight portable test executables compiled. The ASIO DLL failed with `C2375` for `DllGetClassObject` and `DllCanUnloadNow` because the SDK declares STDAPI linkage; warnings C4005 occurred for repeated WIN32_LEAN_AND_MEAN/NOMINMAX macros. This commit changes exports to matching STDAPI definitions, makes export names explicit via `src/ModernSharedASIO.def` under MSVC linker, and guards source macros. It also checks four exports in registry-free preflight. **Correction is source-written only; user must rebuild to confirm C2375 resolved.** No regsvr32, no Cubase test, and no CI.
+Environment: Visual Studio 2022 MSVC 19.44.35228.0, Windows SDK 10.0.26100.0, Windows 11 10.0.22631. CMake configure/generate PASSED; WASAPI static library, `modern_asio_smoke.exe` and eight portable test executables compiled. The ASIO DLL failed with `C2375` for `DllGetClassObject` and `DllCanUnloadNow` because the SDK declares STDAPI linkage; warnings C4005 occurred for repeated WIN32_LEAN_AND_MEAN/NOMINMAX macros. This commit changes exports to matching STDAPI definitions, makes export names explicit via `src/ModernSharedASIO.def` under MSVC linker, and guards source macros. It also checks four exports in registry-free preflight. **Follow-up 2026-10-18: user rebuilt after fix; Debug DLL built, 9/9 CTest including COM factory preflight passed.** Four nonfatal LNK4104 warnings persist; see docs/WINDOWS_BUILD_LOG.md. No regsvr32, no actual WASAPI playback yet, no Cubase test, and no CI.

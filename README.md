@@ -1,6 +1,6 @@
 # ModernSharedASIO
 
-**Status: Batch 6 coherent device-clock diagnostics and overflow-safe conversions; Windows compilation and Cubase 8 tests NOT DONE. Do not install.**
+**Status: Windows x64 Debug DLL compiled successfully; all 9 tests (including registry-free COM factory preflight) passed on the user's Windows PC. Actual speaker output and Cubase 8 / YouTube simultaneous playback NOT TESTED. Do not install yet.**
 
 Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 
@@ -48,6 +48,17 @@ No source or compiled binaries from the ASIO SDK are bundled. Refer to [SDK lice
 
 ## Important limitations
 
-**Do not register the DLL or use it in Cubase yet**: Windows compilation and host/COM preflight are unverified. ASIO callbacks are now paced by WASAPI render-buffer demand. This is **not validated hardware clock synchronization**: device-clock sample-position mapping, measured latency, Cubase host callback timing and real underruns are still unresolved. Device loss, resampling, actual latency reporting, recording and installer also remain incomplete. Shared mode is the only implemented WASAPI mode; microphone/loopback capture not implemented.
+**Do not register the DLL or use it in Cubase yet**: Windows Debug compilation and registry-free COM factory preflight passed (9/9 tests), but actual Windows playback and Cubase host behavior have not yet been verified. ASIO callbacks are now paced by WASAPI render-buffer demand. This is **not validated hardware clock synchronization**: device-clock sample-position mapping, measured latency, Cubase host callback timing and real underruns are still unresolved. Device loss, resampling, actual latency reporting, recording and installer also remain incomplete. Shared mode is the only implemented WASAPI mode; microphone/loopback capture not implemented.
 
 See [roadmap](docs/ROADMAP.md), [Batch 6 status](docs/BATCH6_STATUS.md), [Batch 2 status](docs/BATCH2_STATUS.md), [architecture](docs/ARCHITECTURE.md), and [original evidence](docs/ORIGINAL_EVIDENCE.md).
+
+## Windows manual validation progress (2026-10-18)
+
+The user's VS2022/MSVC x64 Debug build produced `build-win/Debug/ModernSharedASIO.dll`. All nine CTests passed, including registry-free COM object creation. Four `LNK4104` export warnings are nonfatal. The next step is to run the **standalone shared WASAPI smoke executable**, **without installing or registering the DLL**:
+
+```powershell
+cd C:\ModernSharedASIO
+.\build-win\Debug\modern_asio_smoke.exe --tone
+```
+
+Test again while YouTube is already playing, then share the printed stream counters. See [verified Windows build log](docs/WINDOWS_BUILD_LOG.md). Do not claim Cubase support or audio improvements from the successful build alone.
