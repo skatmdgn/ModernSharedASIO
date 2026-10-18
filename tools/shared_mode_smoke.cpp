@@ -65,7 +65,8 @@ int wmain(int argc, wchar_t** argv) {
               << " producer_failures=" << stats.producer_failures << "\n";
     std::cout << "last_stream_hresult=0x" << std::hex
               << static_cast<unsigned long>(stats.last_stream_hresult) << std::dec << "\n";
-    std::cout << "submitted_frames=" << stats.submitted_frames << "\n";
+    std::cout << "submitted_frames=" << stats.submitted_frames
+              << " native_direct_frames=" << stats.native_direct_frames << "\n";
     modern_asio::ClockObservation observation{};
     std::uint64_t played=0, asio_ns=0;
     if(device.read_clock_observation(observation)) {

@@ -135,3 +135,7 @@ After the commit fixing ASIO alternating output-half semantics (d3d770b), the us
 ## Phase 1 output-preserving optimization (2026-10-18)
 
 No Win32 real-device builds or Cubase retests have been run yet for this commit. Added direct planar SPSC FIFO write (one publication instead of 4 scratch+memcpy publishes), opt-in `QueueTargetBlocks=1` (default 2, untouched), randomized equivalence and queue simulation CTests. Clang 17 Linux ASan/UBSan differential 120k, concurrent 250k frames PASS; deterministic 200k render events x4 scenarios PASS. Clang 17 -O3 microbench stereo 0.1918->0.1333 us/block, mono 0.1583->0.1162; these are not Cubase whole-system metrics. Stable Cubase-tested branch `stable/cubase8-verified-20261018`; expected Windows CTests 16. docs/OPTIMIZATION_PHASE1.md.
+
+## Phase 2 WASAPI direct render — local validation only (2026-10-18)
+
+Changed asynchronous native stereo Float32 renderer to FIFO.pop directly into IAudioRenderClient::GetBuffer output; all other formats still stage/convert through scratch. New native_direct_frames counter. Linux Clang 17 ASan+UBSan native differential: 60,000 random cases PASS; capacity-overflow device chunk PASS; prior SPSC and pacing tests rerun PASS. -O3 1056-frame microbenchmark staged 0.3095 us/call, direct 0.2173 us/call (1.425x memory-path). Do not extrapolate to Cubase latency/CPU. MSVC Windows test (17 CTests) and Cubase user acceptance pending. See docs/OPTIMIZATION_PHASE2.md.

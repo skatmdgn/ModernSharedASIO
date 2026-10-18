@@ -8,6 +8,7 @@
 #include "modern_asio/wasapi_shared_renderer.hpp"
 #include "modern_asio/period_policy.hpp"
 #include "modern_asio/engine_demand.hpp"
+#include "modern_asio/float32_output_transfer.hpp"
 #include <audioclient.h>
 #include <avrt.h>
 #include <cmath>
@@ -140,6 +141,7 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     clock_qpc_100ns_.store(0);
     clock_frequency_.store(0);
     submitted_frames_.store(0);
+    native_direct_frames_.store(0);
     last_stream_hresult_.store(S_OK);
     coherent_clock_.reset_stopped();
     try {
@@ -176,7 +178,7 @@ OutputStats WasapiSharedRenderer::stats() const noexcept {
     return {render_events_.load(), underrun_frames_.load(), errors_.load(),
             producer_failures_.load(),clock_reads_.load(),clock_device_position_.load(),
             clock_qpc_100ns_.load(),clock_frequency_.load(),
-            submitted_frames_.load(),last_stream_hresult_.load()};
+            submitted_frames_.load(),native_direct_frames_.load(),last_stream_hresult_.load()};
 }
 bool WasapiSharedRenderer::read_clock_observation(ClockObservation& out) const noexcept {
     return coherent_clock_.read(out);
@@ -260,10 +262,16 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     }
     clock_frequency_.store(hardware_frequency, std::memory_order_relaxed);
     unsigned clock_sample_counter = 0;
-    // Preallocate before the realtime loop; no allocations in render events.
+    // Async Cubase + stereo IEEE float32 can write directly to WASAPI.
+    // Other formats and synchronous diagnostic clients keep the old staging
+    // path (so no host callback is invoked while holding a WASAPI buffer).
+    const bool native_direct=asynchronous_source_ &&
+        fmt.kind==Kind::float32 && fmt.channels==2;
     std::vector<float> scratch;
-    try { scratch.resize(static_cast<std::size_t>(info.buffer_frames) * 2); }
-    catch (...) { publish_initialized(E_OUTOFMEMORY); return; }
+    if(!native_direct) {
+        try { scratch.resize(static_cast<std::size_t>(info.buffer_frames)*2); }
+        catch (...) { publish_initialized(E_OUTOFMEMORY); return; }
+    }
 
     // Startup priming must not synchronously call the Cubase host.
     auto render_available = [&](bool allow_host_callback) -> HRESULT {
@@ -283,8 +291,14 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
                 clock_reads_.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        // Callback production is paced by actual WASAPI render-buffer demand,
-        // not by an independent std::chrono timer. Do this before GetBuffer.
+        // In the native async path acquire the device buffer before consuming
+        // queued PCM. If GetBuffer fails no audio is lost from the FIFO.
+        BYTE* dest=nullptr;
+        if(native_direct) {
+            result=render->GetBuffer(frames,&dest);
+            if(FAILED(result))return result;
+        }
+        // The producer remains paced by actual WASAPI device demand.
         UINT32 remaining = frames;
         UINT32 offset = 0;
         const auto capacity = static_cast<UINT32>(
@@ -300,24 +314,34 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
                     producer_failures_.fetch_add(1,std::memory_order_relaxed);
             }
             // Async source: NEVER call the Cubase DSP callback on this worker.
-            const auto got = queue_.pop(scratch.data() + static_cast<std::size_t>(offset) * 2, batch);
-            if (got < batch) {
-                std::memset(scratch.data() + (static_cast<std::size_t>(offset) + got) * 2,
-                            0, static_cast<std::size_t>(batch - got) * 2 * sizeof(float));
+            const auto got = native_direct
+                ? fill_native_stereo_float32(
+                      queue_,reinterpret_cast<float*>(dest)+
+                          static_cast<std::size_t>(offset)*2,batch).copied_frames
+                : queue_.pop(scratch.data()+static_cast<std::size_t>(offset)*2,batch);
+            if(got<batch) {
+                if(!native_direct)
+                    std::memset(scratch.data()+
+                                    (static_cast<std::size_t>(offset)+got)*2,
+                                0,static_cast<std::size_t>(batch-got)*2*sizeof(float));
                 // Initial startup silence is intentional, not a device underrun.
-                if (allow_host_callback)
-                    underrun_frames_.fetch_add(batch - got, std::memory_order_relaxed);
+                if(allow_host_callback)
+                    underrun_frames_.fetch_add(batch-got,std::memory_order_relaxed);
             }
             offset += batch;
             remaining -= batch;
         }
-        BYTE* dest = nullptr;
-        result = render->GetBuffer(frames, &dest);
-        if (FAILED(result)) return result;
-        convert(scratch.data(), dest, frames, fmt);
+        if(!native_direct) {
+            result=render->GetBuffer(frames,&dest);
+            if(FAILED(result))return result;
+            convert(scratch.data(),dest,frames,fmt);
+        }
         const auto release_hr=render->ReleaseBuffer(frames,0);
-        if(SUCCEEDED(release_hr))
+        if(SUCCEEDED(release_hr)) {
             submitted_frames_.fetch_add(frames,std::memory_order_relaxed);
+            if(native_direct)
+                native_direct_frames_.fetch_add(frames,std::memory_order_relaxed);
+        }
         // After release, wake the separate producer for upcoming event(s).
         // On the WASAPI worker this performs only SetEvent, never host DSP.
         if (SUCCEEDED(release_hr) && allow_host_callback && asynchronous_source_ &&
@@ -331,7 +355,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     MmcssOwner mmcss{AvSetMmThreadCharacteristicsW(L"Pro Audio", &avrt_index)};
     if (!mmcss.value) mmcss.value = AvSetMmThreadCharacteristicsW(L"Audio", &avrt_index);
     if (mmcss.value) AvSetMmThreadPriority(mmcss.value, AVRT_PRIORITY_HIGH);
-    hr = render_available(false); // prime with prefilled ASIO B half and silence
+    hr = render_available(false); // prime WASAPI with silence; never call Cubase DSP
     if (FAILED(hr)) { publish_initialized(hr); return; }
     hr = client->Start();
     if (FAILED(hr)) { publish_initialized(hr); return; }

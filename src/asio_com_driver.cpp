@@ -514,7 +514,7 @@ private:
             "host_peak_left_ppm=%llu host_peak_right_ppm=%llu "
             "first_nonzero_block=%llu last_nonzero_block=%llu "
             "asiodriver_wall_ms=%llu asio_callback_audio_ms=%llu "
-            "wasapi_submitted_frames=%llu remaining_fifo_frames=%llu\n",
+            "wasapi_submitted_frames=%llu remaining_fifo_frames=%llu native_direct_frames=%llu\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_.load()),
             static_cast<unsigned long long>(max_callback_us_.load()),
@@ -545,7 +545,8 @@ private:
                     (callback_count_.load()*static_cast<std::uint64_t>(kFrames)*1000ULL)/
                     (rate_?rate_:1)),
             static_cast<unsigned long long>(stats.submitted_frames),
-            static_cast<unsigned long long>(fifo_.available_frames()));
+            static_cast<unsigned long long>(fifo_.available_frames()),
+            static_cast<unsigned long long>(stats.native_direct_frames));
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);

@@ -75,3 +75,7 @@ Remove-ItemProperty -Path 'HKCU:\Software\ModernSharedASIO' -Name QueueTargetBlo
 3. Consider a native Float32-stereo WASAPI buffer-fill path that avoids the renderer's scratch/intermediate memcpy, if sample-format/ownership checks prove safe.
 4. Improve `getLatencies()` to report stable and physically meaningful values, verified with measurement rather than subtracting made-up milliseconds.
 5. Test sample-rate/device migration, long-run stability, heavy VST/ASIO-Guard, and restart cycles before shipping.
+
+## Phase 2 continuation
+
+The next stage replaces FIFO->scratch->WASAPI memcpy with direct FIFO->device writing for native asynchronous Float32 stereo only. All Cubase ASIO 512-frame/output half semantics remain fixed. See [Phase 2](OPTIMIZATION_PHASE2.md) and the new 17th CTest. Real Windows device results remain pending.
