@@ -55,6 +55,11 @@ if(WIN32)
             target_link_options(ModernSharedASIO PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/src/ModernSharedASIO.def")
         endif()
         target_compile_definitions(ModernSharedASIO PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
+        # Manual-only host smoke: loads DLL by path, creates real IASIO buffers,
+        # streams 5 seconds, never installs or registers the driver.
+        add_executable(modern_asio_host_smoke tools/asio_host_smoke.cpp)
+        target_include_directories(modern_asio_host_smoke PRIVATE "${ASIO_SDK_DIR}/common")
+        target_link_libraries(modern_asio_host_smoke PRIVATE ole32)
         add_executable(modern_asio_preflight tools/asio_com_preflight.cpp)
         target_include_directories(modern_asio_preflight PRIVATE "${ASIO_SDK_DIR}/common")
         target_link_libraries(modern_asio_preflight PRIVATE ole32)
