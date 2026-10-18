@@ -11,6 +11,7 @@
 #include <Objbase.h>
 #include <avrt.h>
 #include "modern_asio/producer_fill_policy.hpp"
+#include "modern_asio/asio_callback_timeline.hpp"
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <wrl/client.h>
@@ -138,13 +139,14 @@ public:
         latency_queries_.store(0);
         last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
-        position_.store(0,std::memory_order_release);
+        callback_timeline_.reset();
         buffer_index_=0;
         // ASIO host can prefill output half B before start.
         const auto initial=bridge_.submit(active_[0]?planar_[0][1].data():nullptr,
                                           active_[1]?planar_[1][1].data():nullptr,kFrames);
         if(initial!=kFrames)return ASE_HWMalfunction;
-        position_.store(kFrames,std::memory_order_release);
+        // Prefilling output B does NOT advance the ASIO callback sample position.
+        // The first bufferSwitch/index 0 must report samplePosition=0.
         // Cubase DSP runs on a dedicated producer worker, not the render worker.
         producer_stop_event_=CreateEventW(nullptr,TRUE,FALSE,nullptr);
         producer_wake_event_=CreateEventW(nullptr,FALSE,FALSE,nullptr);
@@ -225,7 +227,7 @@ public:
     ASIOError setClockSource(long i) override {return i==0?ASE_OK:ASE_InvalidParameter;}
     ASIOError getSamplePosition(ASIOSamples* samples,ASIOTimeStamp* clock) override {
         if(!samples||!clock)return ASE_InvalidParameter;
-        write64(*samples,position_.load(std::memory_order_relaxed));write64(*clock,qpc_ns());
+        write64(*samples,callback_timeline_.current());write64(*clock,qpc_ns());
         return ASE_OK;
     }
     ASIOError getChannelInfo(ASIOChannelInfo* info) override {
@@ -253,7 +255,7 @@ public:
         callbacks_=cb;
         time_info_=cb->asioMessage && cb->bufferSwitchTimeInfo &&
             cb->asioMessage(kAsioSupportsTimeInfo,0,nullptr,nullptr)==1;
-        position_.store(0);buffer_index_=0;prepared_=true;return ASE_OK;
+        callback_timeline_.reset();buffer_index_=0;prepared_=true;return ASE_OK;
     }
     ASIOError disposeBuffers() override {
         if(playing_)return ASE_InvalidMode;
@@ -321,7 +323,7 @@ private:
                 time.timeInfo.speed=1.;
                 time.timeInfo.sampleRate=static_cast<double>(rate_);
                 time.timeInfo.flags=kSystemTimeValid|kSamplePositionValid|kSampleRateValid;
-                write64(time.timeInfo.samplePosition,position_.load(std::memory_order_relaxed));
+                write64(time.timeInfo.samplePosition,callback_timeline_.current());
                 write64(time.timeInfo.systemTime,qpc_ns());
                 callbacks_->bufferSwitchTimeInfo(&time,index,ASIOTrue);
             } else {
@@ -344,7 +346,7 @@ private:
             callback_errors_.fetch_add(1,std::memory_order_relaxed);
             return false;
         }
-        position_.fetch_add(kFrames,std::memory_order_release);
+        callback_timeline_.complete_callback(static_cast<std::uint32_t>(kFrames));
         buffer_index_^=1;
         return true;
     }
@@ -409,7 +411,7 @@ private:
     std::atomic<bool> playing_{false};
     long buffer_index_{0};
     std::atomic<std::uint64_t> callback_errors_{0};
-    std::atomic<std::uint64_t> position_{0};
+    modern_asio::AsioCallbackTimeline callback_timeline_{};
     std::array<std::array<std::vector<float>,2>,2> planar_{};
     ASIOCallbacks* callbacks_{nullptr};
     unsigned rate_{0};
