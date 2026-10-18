@@ -95,3 +95,9 @@ Registry-free ASIO host smoke: PASS
 ```
 
 No rebuild is needed for the second host smoke mode when the new host executable already exists. Do not register/install before this additional callback-path check and supervised registration procedure.
+
+### ASIO TimeInfo Windows smoke passed; next Cubase opt-in
+
+User confirmed second real Windows ASIO 2.x TimeInfo mode output with YouTube concurrently: 471 callbacks, 0 invalid buffers, 241664 sample position. Both callback modes are now validated using the standalone mock ASIO host (not Cubase).
+
+Before Cubase 8.0.40 evaluation, opt-in reversible x64 installation instructions are in `scripts/register_cubase_test.ps1`, `scripts/unregister_cubase_test.ps1`, and `docs/WINDOWS_BUILD_LOG.md`. They target only an independent new COM CLSID / ASIO registration, and will stop rather than overwrite existing entries. The source scripts have not yet been run on Windows. Close Cubase and review the scripts before executing with Administrator privileges. The original `asioglld.dll` is not modified.

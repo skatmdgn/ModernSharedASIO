@@ -73,3 +73,25 @@ Registry-free ASIO host smoke: PASS
 - Host buffers validated: `invalid_buffers=0`. This manual host test did not measure actual xruns inside the ASIO renderer, audio latency, CPU load, or click/dropout statistics beyond user observation.
 - **CUBASE_8_0_40_VERIFIED=false**, **ASIO_TIMEINFO_VERIFIED=false** and **STUDIO_PERFORMANCE_A_B_VERIFIED=false**. The driver is still not installed/registered.
 - Next safe manual test: `modern_asio_host_smoke.exe <DLL> --tone --time-info` (no registry modifications); subsequently make a separate opt-in Cubase driver registration checklist with backup and reversal steps. The original Steinberg driver must not be modified.
+
+## Verified ASIO TimeInfo playback and optional Cubase registration (2026-10-18)
+
+User confirmed 440Hz ASIO output **simultaneous with YouTube** using `bufferSwitchTimeInfo`, with these exact Windows console results:
+
+```
+Registry-free ASIO host: rate=48000, block=512, channels=2, mode=bufferSwitchTimeInfo
+Quiet 440Hz ASIO tone for 5 seconds
+ASIO callbacks=471 invalid_buffers=0 sample_position_low=241664
+Registry-free ASIO host smoke: PASS
+```
+
+Accounting: 471 * 512 + 512 startup preroll = 241664. Both legacy bufferSwitch and ASIO 2.x TimeInfo callback paths are now Windows-runtime VERIFIED using a separate minimal ASIO host. Cubase 8.0.40 itself is NOT YET VERIFIED; neither callback passing proves host stability, precise latency, or CPU improvement.
+
+Two opt-in Windows PowerShell scripts added as **source-written, not yet executed**:
+
+- `scripts/register_cubase_test.ps1` refuses existing registry name/CLSID conflicts, demands elevated 64-bit PowerShell, confirms Cubase is closed, runs registry-free preflight, backs up the existing HKLM SOFTWARE ASIO list under the ignored `build-win/registry-backup` folder, registers only our independent Modern Shared Audio CLSID via x64 regsvr32, and verifies the registered path and CLSID.
+- `scripts/unregister_cubase_test.ps1` verifies that the experimental registry keys still refer to *this* CLSID and DLL, then invokes 64-bit regsvr32 /u. It refuses mismatched entries to prevent deleting others.
+
+Cubase initial gate: close Cubase, use a 64-bit PowerShell **Run as Administrator**, `git pull --ff-only`, run `scripts/register_cubase_test.ps1 -Configuration Debug`. Launch Cubase 8.0.40, choose Devices > Device Setup > VST Audio System > ASIO Driver > Modern Shared Audio. Create an EMPTY project at 48 kHz, configure Devices > VST Connections > Outputs > Stereo Out to ASIO channels 1-2 if needed, then play a built-in test tone/audio and YouTube at the same time. Report whether the driver is listed and loads, any messages or crashes, audio quality or dropouts. Do not use a valuable production project. To revert, close Cubase and run `scripts/unregister_cubase_test.ps1 -Configuration Debug` in elevated PowerShell. The original Steinberg ASIO driver remains separate.
+
+**Registration has not been performed by the assistant or user in this conversation at this stage.** CI stays deferred to final release gate.

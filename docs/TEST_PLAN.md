@@ -35,3 +35,6 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 26. Repeat ASIO host smoke with `--tone --time-info` for ASIO 2.x TimeInfo path. Record callback_count and error code; test YouTube concurrently. Use moderate speaker volume and close Cubase during tests.
 
 27. User successfully played registry-free ASIO stereo 440Hz using `bufferSwitch` mode with simultaneous YouTube: 472 callbacks, invalid_buffers=0, sample_position_low=242176 = 472*512+512. PASS. Repeat in ASIO TimeInfo mode prior to any Cubase registration; do not treat ASIO TimeInfo/Cubase as already validated.
+
+28. User confirmed registry-free ASIO 2.x bufferSwitchTimeInfo mode: 471 callbacks, invalid_buffers=0, sample_position_low=241664 = 471*512+512 initial preroll; audible concurrent YouTube. Verified standalone ASIO host callback path, not Cubase.
+29. Next Cubase gate: controlled independent 64-bit registration (use scripts/register_cubase_test.ps1), optional rollback (scripts/unregister_cubase_test.ps1). Start with EMPTY 48kHz project, verify Stereo Out 1/2 connection, compare simultaneous YouTube. Review registration before running; no existing Steinberg DLL replacement or CI yet.

@@ -12,7 +12,8 @@
 - [x] M1–M6 Windows **Debug x64 compilation + registry-free COM factory preflight** — user MSVC 19.44 / Windows SDK 10.0.26100 log confirms 9/9 CTest passed, HEAD `4a6a68eb`.
 - [x] Real Windows WASAPI shared playback **alongside YouTube** — audible stereo 440Hz test, 48kHz IAudioClient3, 500 events, zero stream errors (user console). 960 underrun frames merit further diagnosis.
 - [x] Registry-free IASIO host playback **VERIFIED on user's Windows machine**: legacy `bufferSwitch` 472 callbacks, 0 invalid buffers, valid `sample_position_low=242176`; 440Hz output and YouTube audible simultaneously.
-- [ ] ASIO `bufferSwitchTimeInfo` mode: run `modern_asio_host_smoke.exe <DLL> --tone --time-info` manually before registering for Cubase.
+- [x] ASIO `bufferSwitchTimeInfo` actual playback verified on Windows with YouTube: 471 callbacks, 0 invalid_buffers, 241664 frames (incl. 512 preroll).
+- [ ] Cubase 8.0.40 verification still pending; protected x64 registration and unregistration PowerShell scripts written but NOT EXECUTED.
 - [ ] Windows Release x64 build and **Cubase 8.0.40+YouTube** runtime: NOT TESTED.
 - [x] M3 event pacing — ASIO blocks produced only when WASAPI output demands frames; bounded requests/no-progress guard.
 - [x] M3 simulation — 60,000 × 441-frame and 60,000 × 480-frame consumption events, verified conservation with sanitizers.
@@ -67,4 +68,23 @@ git pull --ff-only
 .\build-win\Debug\modern_asio_host_smoke.exe .\build-win\Debug\ModernSharedASIO.dll --tone
 ```
 
-Then optionally repeat with `--tone --time-info` to test ASIO 2.x bufferSwitchTimeInfo callbacks. Neither run writes Windows ASIO registry entries. This validates ASIO engine output directly before opting into any Cubase registration. **Follow-up: user built and ran the legacy bufferSwitch host, heard audio alongside YouTube, PASS. Time-info option still pending.** See docs/WINDOWS_BUILD_LOG.md.
+Then optionally repeat with `--tone --time-info` to test ASIO 2.x bufferSwitchTimeInfo callbacks. Neither run writes Windows ASIO registry entries. This validates ASIO engine output directly before opting into any Cubase registration. **Follow-up: both legacy bufferSwitch (472 callbacks) and TimeInfo (471 callbacks) passed user Windows playback alongside YouTube. Cubase host registration/loading remains pending.** See docs/WINDOWS_BUILD_LOG.md.
+
+### User-guided Cubase 8.0.40 opt-in registration
+
+This is an intentional **Windows registry mutation** and must be run by the user only after closing Cubase and reviewing the script. The code refuses to replace existing ASIO entries and preserves the old driver. Both scripts are not yet tested on Windows.
+
+```powershell
+# Open 64-bit PowerShell as Administrator; close Cubase first.
+cd C:\ModernSharedASIO
+git pull --ff-only
+.\scripts\register_cubase_test.ps1 -Configuration Debug
+```
+
+Then Cubase 8.0.40: Devices > Device Setup > VST Audio System > ASIO Driver > Modern Shared Audio; in an empty project set 48kHz to match the Windows mixer. If necessary, Devices > VST Connections > Outputs > Stereo Out output map L/R to ASIO 1/2. Test audio and YouTube concurrently. If there is any unexpected issue, close Cubase and rollback:
+
+```powershell
+.\scripts\unregister_cubase_test.ps1 -Configuration Debug
+```
+
+Registration is separate from replacing any existing Steinberg DLL. Backups under `build-win/registry-backup` are for inspection only; do NOT blindly re-import because that would overwrite later unrelated changes.
