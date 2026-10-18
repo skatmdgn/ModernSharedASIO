@@ -24,3 +24,7 @@ Do NOT alter both Record Enable and ASIO-Guard settings together; do not record 
 4. If only programmed-MIDI/ASIO-Guard path fails, inspect Cubase plug-in delay compensation and ASIO hardware latency stability, ASIO callback timing/clock correlation, and differences between record-armed/unarmed routes. Avoid invented claims that the ASIO driver directly sends incorrect MIDI notes.
 
 **Status: user evidence grounded; cause not identified, Windows/Cubase workaround not confirmed, no source patch in this note.**
+
+## New clean-project update — 120 BPM, 24-bar offset (2026-10-18)
+
+User now confirms entirely NEW 4/4 120 BPM Cubase project: audio track output corresponds to ~24 bars ahead (48 s at this tempo), programmed MIDI/VST notes are SILENT, physical keyboard live VST notes still NORMAL. This is more general than ASIO-Guard multitrack overload or specific Serum patches. See docs/CUBASE_TRANSPORT_EPOCH_TEST.md for a targeted, no-build wait-30s A/B test distinguishing engine-start uptime from transport-start musical epoch. Source DLL runtime version currently not verified; no new guessed C++ patch.
