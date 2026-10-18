@@ -5,6 +5,8 @@
 #define NOMINMAX
 #include <Windows.h>
 #include <Objbase.h>
+#include <avrt.h>
+#include "modern_asio/producer_fill_policy.hpp"
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <wrl/client.h>
@@ -53,7 +55,7 @@ HRESULT reg_text(HKEY key,const wchar_t* name,const wchar_t* s) noexcept {
 }
 class Driver final : public IASIO {
 public:
-    Driver():render_(fifo_, &Driver::request_audio, this, kFrames),bridge_(fifo_) {g_objects.fetch_add(1);}
+    Driver():render_(fifo_, &Driver::request_audio, this, kFrames, true),bridge_(fifo_) {g_objects.fetch_add(1);}
     ~Driver(){stop();g_objects.fetch_sub(1);}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,void** ppv) override {
         if(!ppv)return E_POINTER;
@@ -106,27 +108,43 @@ public:
                                           active_[1]?planar_[1][1].data():nullptr,kFrames);
         if(initial!=kFrames)return ASE_HWMalfunction;
         position_.store(kFrames,std::memory_order_release);
-        // Stream is active during backend start: its worker may call the host.
+        // Cubase DSP runs on a dedicated producer worker, not the render worker.
+        producer_stop_event_=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        producer_wake_event_=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+        if(!producer_stop_event_||!producer_wake_event_){
+            stop_producer();return ASE_NoMemory;
+        }
+        try {producer_thread_=std::thread([this]{producer_loop();});}
+        catch(...){stop_producer();return ASE_NoMemory;}
+        // Protect buffer state before the audio engine can start rendering.
         playing_.store(true,std::memory_order_release);
         auto hr=render_.start(0);
         if(FAILED(hr)){
+            render_.stop();
+            stop_producer();
             playing_.store(false,std::memory_order_release);
             put_text(error_,"WASAPI shared-mode startup failed",sizeof(error_));
             return ASE_HWMalfunction;
         }
         if(render_.device_info().sample_rate!=rate_){
             render_.stop();
+            stop_producer();
             playing_.store(false,std::memory_order_release);
             put_text(error_,"Device mix sample rate changed; reload driver",sizeof(error_));
             return ASE_NoClock;
         }
+        // Wake DSP producer for the next render event.
+        if(producer_wake_event_)SetEvent(producer_wake_event_);
         return ASE_OK;
     }
     ASIOError stop() override {
-        // A synchronous host Stop from inside its own callback is unsupported.
-        // Never attempt to join/free a still-running WASAPI callback thread.
-        if(render_.on_render_thread())return ASE_InvalidMode;
+        // Joining ourselves from a host callback is forbidden.
+        if(render_.on_render_thread() ||
+           (producer_thread_.joinable() &&
+            producer_thread_.get_id()==std::this_thread::get_id()))
+            return ASE_InvalidMode;
         render_.stop();
+        stop_producer();
         playing_.store(false,std::memory_order_release);
         return ASE_OK;
     }
@@ -208,10 +226,49 @@ public:
     ASIOError outputReady() override {return ASE_OK;}
 private:
     static bool request_audio(void* raw) noexcept {
-        return static_cast<Driver*>(raw)->produce_one_block();
+        // Only signals the worker; no host DSP on WASAPI render thread.
+        auto* self=static_cast<Driver*>(raw);
+        return self->producer_wake_event_ &&
+               SetEvent(self->producer_wake_event_)!=FALSE;
+    }
+    void stop_producer() noexcept {
+        if(producer_stop_event_)SetEvent(producer_stop_event_);
+        if(producer_wake_event_)SetEvent(producer_wake_event_);
+        if(producer_thread_.joinable())producer_thread_.join();
+        if(producer_wake_event_){
+            CloseHandle(producer_wake_event_);producer_wake_event_=nullptr;
+        }
+        if(producer_stop_event_){
+            CloseHandle(producer_stop_event_);producer_stop_event_=nullptr;
+        }
+    }
+    void producer_loop() noexcept {
+        DWORD task_index=0;
+        HANDLE mmcss=AvSetMmThreadCharacteristicsW(L"Pro Audio",&task_index);
+        if(!mmcss)mmcss=AvSetMmThreadCharacteristicsW(L"Audio",&task_index);
+        if(mmcss)AvSetMmThreadPriority(mmcss,AVRT_PRIORITY_NORMAL);
+        HANDLE events[2]{producer_stop_event_,producer_wake_event_};
+        for(;;){
+            DWORD state=WaitForMultipleObjects(2,events,FALSE,INFINITE);
+            if(state==WAIT_OBJECT_0)break;
+            if(state!=WAIT_OBJECT_0+1){
+                callback_errors_.fetch_add(1,std::memory_order_relaxed);
+                break;
+            }
+            const auto planned=modern_asio::producer_blocks_to_fill(
+                fifo_.available_frames(),fifo_.capacity_frames(),
+                static_cast<std::size_t>(kFrames),
+                2*static_cast<std::size_t>(kFrames),4);
+            for(std::size_t i=0;i<planned;++i){
+                if(WaitForSingleObject(producer_stop_event_,0)==WAIT_OBJECT_0)
+                    break;
+                if(!produce_one_block())break;
+            }
+        }
+        if(mmcss)AvRevertMmThreadCharacteristics(mmcss);
     }
     bool produce_one_block() noexcept {
-        // Only the WASAPI render worker calls this after start().
+        // Only the ASIO producer thread calls Cubase host callbacks.
         if(!prepared_||!callbacks_)return false;
         const long index=buffer_index_;
         try {
@@ -244,7 +301,10 @@ private:
     modern_asio::SpscStereoRing fifo_{32768};
     modern_asio::WasapiSharedRenderer render_;
     modern_asio::AsioPlaybackBridge bridge_;
-    // Control thread owns playing_; render callback never mutates it.
+    // The host controls start/stop on one thread; producer is SPSC writer.
+    HANDLE producer_stop_event_{nullptr};
+    HANDLE producer_wake_event_{nullptr};
+    std::thread producer_thread_;
     std::atomic<bool> playing_{false};
     long buffer_index_{0};
     std::atomic<std::uint64_t> callback_errors_{0};

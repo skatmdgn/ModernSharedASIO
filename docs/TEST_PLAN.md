@@ -19,3 +19,8 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 13. Validate startup callback isolation; first priming never invokes Cubase producer. A later real WASAPI device event may race outer ASIO start return and needs host validation.
 14. Record producer_failures separately from stream_errors and underrun_frames; startup zero padding is intentional, not a real runtime xrun.
 15. Use scripts/build_windows_x64.ps1 for Windows x64 build and registry-free COM preflight, never automatic driver registration.
+
+16. Batch5 producer policy test (`modern_asio_producer_policy_tests`): 60,000 randomized capacity/target/producer block cases; no overflow or unbounded production. Run on Windows too.
+17. Measure Windows producer callback duration and event→producer wake latency. Compare queue starvation and added 1024-frame target buffering to Batch4; do not assume lower latency than the old synchronous path.
+18. Verify no Cubase host callbacks occur on the WASAPI worker and that stop/join safely handles host callback timeouts/reentrancy. Run device unplug and teardown torture before registering the DLL.
+19. Run the Batch4 startup-isolation test, now added to CMake (it was present as source but not registered in the previous CTest list).

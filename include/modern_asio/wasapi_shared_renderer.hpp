@@ -43,9 +43,11 @@ public:
     explicit WasapiSharedRenderer(SpscStereoRing& queue,
                                  AudioRequest source = nullptr,
                                  void* context = nullptr,
-                                 std::uint32_t source_block_frames = 0) noexcept
+                                 std::uint32_t source_block_frames = 0,
+                                 bool asynchronous_source = false) noexcept
         : queue_(queue), source_(source), source_context_(context),
-          source_block_frames_(source_block_frames) {}
+          source_block_frames_(source_block_frames),
+          asynchronous_source_(asynchronous_source) {}
     ~WasapiSharedRenderer() { stop(); }
     WasapiSharedRenderer(const WasapiSharedRenderer&) = delete;
     WasapiSharedRenderer& operator=(const WasapiSharedRenderer&) = delete;
@@ -66,6 +68,7 @@ private:
     AudioRequest source_{nullptr};
     void* source_context_{nullptr};
     std::uint32_t source_block_frames_{0};
+    bool asynchronous_source_{false};
     HANDLE stop_event_{nullptr};
     std::thread thread_;
     mutable std::mutex mutex_;

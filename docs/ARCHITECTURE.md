@@ -30,3 +30,20 @@
 ## Batch 3 scheduling revision
 
 The independent `std::chrono::sleep_until` ASIO callback thread has been removed. WASAPI worker render events now request missing 512-frame ASIO blocks through `fulfill_audio_demand`; no producer callback is invoked if sufficient frames are queued. Work per event is bounded by FIFO capacity and stalls are detected. MMCSS is acquired before first host callback. Periodic IAudioClock measurements are diagnostic only; `getSamplePosition()` and ASIO timeinfo still use generated-frame count/QPC, not a calibrated hardware clock. This is an experimental event-paced architecture, not verified low-latency performance.
+
+## Batch 5: production/render thread separation (source only)
+
+```text
+WASAPI event callback (MMCSS high)
+   -> read SPSC FIFO (never Cubase DSP)
+   -> ReleaseBuffer()
+   -> SetEvent(producer_wake_event)
+                    |
+                    v
+ASIO producer thread (MMCSS normal, event-driven)
+   -> policy: fill up to 1024 queued frames (2 x 512)
+   -> Cubase bufferSwitch/bufferSwitchTimeInfo callback
+   -> packed Float32 stereo -> preallocated SPSC
+```
+
+A newly introduced scheduling difference: FIFO starvation can still cause silence because the render worker never waits for Cubase. This is deliberate to protect Windows audio deadlines, and MUST be measured on hardware. The target of two ASIO blocks is provisional, not a measured optimum. Producer thread is joined before its events/buffers can be released. If the host callback hangs, stop may block indefinitely; do not call it production-safe. No Windows build/runtime test yet.

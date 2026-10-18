@@ -279,11 +279,15 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
             std::min<std::size_t>(queue_.capacity_frames(), UINT32_MAX));
         while (remaining) {
             const auto batch = std::min(remaining, capacity);
-            const auto demand = fulfill_audio_demand(queue_, batch, source_block_frames_,
-                                                      source_, source_context_,
-                                                      allow_host_callback);
-            if (demand.stalled)
-                producer_failures_.fetch_add(1,std::memory_order_relaxed);
+            if (!asynchronous_source_) {
+                // Legacy/synchronous mode: useful for simple diagnostics only.
+                const auto demand = fulfill_audio_demand(
+                    queue_, batch, source_block_frames_, source_, source_context_,
+                    allow_host_callback);
+                if (demand.stalled)
+                    producer_failures_.fetch_add(1,std::memory_order_relaxed);
+            }
+            // Async source: NEVER call the Cubase DSP callback on this worker.
             const auto got = queue_.pop(scratch.data() + static_cast<std::size_t>(offset) * 2, batch);
             if (got < batch) {
                 std::memset(scratch.data() + (static_cast<std::size_t>(offset) + got) * 2,
@@ -299,7 +303,13 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         result = render->GetBuffer(frames, &dest);
         if (FAILED(result)) return result;
         convert(scratch.data(), dest, frames, fmt);
-        return render->ReleaseBuffer(frames, 0);
+        const auto release_hr=render->ReleaseBuffer(frames,0);
+        // After release, wake the separate producer for upcoming event(s).
+        // On the WASAPI worker this performs only SetEvent, never host DSP.
+        if (SUCCEEDED(release_hr) && allow_host_callback && asynchronous_source_ &&
+            source_ && !source_(source_context_))
+            producer_failures_.fetch_add(1,std::memory_order_relaxed);
+        return release_hr;
     };
 
     // Apply MMCSS before any host callback on the pre-roll path.

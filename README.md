@@ -1,6 +1,6 @@
 # ModernSharedASIO
 
-**Status: Batch 4 startup-safety prototype; portable tests PASS, Windows compilation and Cubase 8 tests NOT DONE. Do not install.**
+**Status: Batch 5 isolated ASIO producer prototype; Windows compilation and Cubase 8 tests NOT DONE. Do not install.**
 
 Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 
@@ -15,6 +15,9 @@ Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 
 - Optional IAudioClock output diagnostics (device ticks, frequency, QPC timestamp in 100-ns units).
 - Portable demand tests, startup callback isolation test, and 44.1/48k event-consumption simulations.
 - Initial WASAPI priming bypasses Cubase callbacks; active-state protection covers startup, and producer failures are separately reported.
+- Batch 5: move Cubase ASIO DSP callbacks to a separate MMCSS producer thread; WASAPI render worker only consumes the prefilled ring and posts a Win32 event to wake the producer.
+- Producer fills at most 2×512 frames ahead, with at most four block requests per wake. This changes the scheduling/latency trade-off and is not yet validated on hardware.
+- Fix missing CMake registration of the prior Batch 4 startup-isolation test; add 60,000-case randomized bounded-prefill policy unit test.
 - Corrected COM lifetime ordering and 24 valid bit / 32-bit PCM container conversion.
 
 ## Build
