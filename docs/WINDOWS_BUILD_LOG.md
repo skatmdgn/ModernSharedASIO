@@ -143,3 +143,7 @@ Changed asynchronous native stereo Float32 renderer to FIFO.pop directly into IA
 ## 2026-10-18 first real Cubase phase-2 playback log: functioning but low queue underruns
 
 Running binary confirmed native WASAPI direct for all 3 sessions. In busy 48.635s run: 4548 callbacks, 3950 non-silent, max 30371us callback, 4 over-budget callbacks, 2976 underrun frames, 0 stream/callback errors. Queue target 512 (experimental one-block), rather than proven default 1024; device 480-frame engine period and buffer 1056. User heard no problem; **not** zero-underrun. Recommend revert QueueTargetBlocks override for controlled same-load A/B. Added read-only realtime-safe event instrumentation after this user log; code not yet Windows built. See docs/CUBASE_PHASE2_UNDERRUN_REVIEW.md.
+
+## UnderrunEventTracker portable build check (2026-10-18)
+
+The new standalone diagnostic header and C++ test were compiled with Clang C++20, AddressSanitizer+UndefinedBehaviorSanitizer and executed: `Underrun event instrumentation PASS`. Remote GitHub clone was unavailable in local shell due to DNS restrictions; this is only the portable test, not a Windows/MSVC build or Cubase verification. Full 18-CTest suite still pending.

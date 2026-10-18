@@ -35,3 +35,7 @@ Remove-ItemProperty -Path 'HKCU:\Software\ModernSharedASIO' -Name QueueTargetBlo
 New stop log fields are appended after existing fields, so old log parsers should still be able to read the original keys. The previously reported 2,976 frames cannot be broken down retroactively; only logs from the rebuilt driver will contain event-level summaries.
 
 **Verification status:** User real playback confirmed on previous phase-2 binary. The instrumentation code is source-level and its Windows MSVC test/Cubase results are pending. Total CMake test registration becomes **18** (17 previous + new event test). CI remains deferred until final.
+
+## Portable instrumentation verification
+
+After committing, the new `include/modern_asio/underrun_event_tracker.hpp` and `tests/underrun_event_tests.cpp` were compiled and executed locally under Clang C++20 (`-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -pthread`): **`Underrun event instrumentation PASS`**. This covers the standalone counter only, **NOT the Windows WASAPI integration, MSVC build, full 18-CTest suite, or Cubase performance**. The machine cannot directly clone GitHub due to DNS/network restrictions; the exact new portable source was separately compiled. All Windows checks remain outstanding.
