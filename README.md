@@ -149,3 +149,7 @@ For a native Windows shared-mode **stereo Float32** endpoint and asynchronous AS
 ### Loaded Cubase low-queue test: audible playback PASS, hidden underruns (2026-10-18)
 
 User's phase-2 log confirms 100% native Float32 direct WASAPI rendering and functioning Audio/MIDI, but **QueueTargetBlocks=1** (512 frames) yielded **2,976 underrun frames (~62ms cumulative) and four over-budget host callbacks** in a 48.6s busy session. Don't classify the 1-block low-latency mode as stable. Default 2-block/1024-frame mode remains recommended until separately verified. New output diagnostics break underruns down by render events without changing PCM. See [Loaded Cubase run analysis](docs/CUBASE_PHASE2_UNDERRUN_REVIEW.md).
+
+### Phase 3: high-load telemetry (2026-10-18)
+
+Added Cubase ASIO callback histogram, consecutive over-budget streak and sampled WASAPI FIFO pressure to stop diagnostics, without changing PCM, buffer sizes or ASIO double-buffer handling. New portable tests pass Clang ASan/UBSan and GCC Release, but full Windows tests (19) and Cubase runtime on new DLL remain pending. See docs/OPTIMIZATION_PHASE3_LOAD_TELEMETRY.md.

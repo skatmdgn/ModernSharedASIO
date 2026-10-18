@@ -16,6 +16,7 @@
 #include "modern_asio/asio_block_stamp.hpp"
 #include "modern_asio/asio_output_silence.hpp"
 #include "modern_asio/asio_double_buffer_handoff.hpp"
+#include "modern_asio/realtime_load_telemetry.hpp"
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <wrl/client.h>
@@ -181,6 +182,7 @@ public:
         if(!initialized_||!prepared_||playing_)return ASE_InvalidMode;
         fifo_.clear_stopped();
         callback_count_.store(0);
+        callback_timings_.reset_stopped();
         callback_errors_.store(0);
         over_budget_callbacks_.store(0);
         max_callback_us_.store(0);
@@ -420,8 +422,10 @@ private:
         const auto callback_us=end_ns>=start_ns ? (end_ns-start_ns)/1000 : 0;
         const auto block_ordinal=callback_count_.fetch_add(1,std::memory_order_relaxed);
         keep_max(max_callback_us_,callback_us);
-        if(rate_ && callback_us >=
-            (static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_))
+        const auto callback_budget_us=rate_
+            ? static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_ : 0ULL;
+        callback_timings_.observe(callback_us,callback_budget_us,block_ordinal);
+        if(callback_budget_us && callback_us>=callback_budget_us)
             over_budget_callbacks_.fetch_add(1,std::memory_order_relaxed);
 
         // Compare actual ASIO output data with what the host claims to play.
@@ -499,7 +503,8 @@ private:
         if(file==INVALID_HANDLE_VALUE) return;
         const auto info=render_.device_info();
         const auto stats=render_.stats();
-        char line[1200]{};
+        const auto timing=callback_timings_.snapshot_stopped();
+        char line[2400]{};
         const int bytes=std::snprintf(
             line,sizeof(line),
             "ASIO_STOP rate=%u block_frames=%ld requested_period_ms=%u "
@@ -516,7 +521,14 @@ private:
             "asiodriver_wall_ms=%llu asio_callback_audio_ms=%llu "
             "wasapi_submitted_frames=%llu remaining_fifo_frames=%llu native_direct_frames=%llu "
             "underrun_events=%llu largest_underrun_event_frames=%llu "
-            "first_underrun_render_event=%llu\n",
+            "first_underrun_render_event=%llu "
+            "cb_time_hist_500_1k_2k_4k_8k_12k_20k_us=%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu "
+            "cb_mean_us=%llu cb_longest_overbudget_streak=%llu "
+            "cb_first_overbudget_block=%llu "
+            "render_queue_samples=%llu render_queue_min_frames=%llu "
+            "render_queue_max_frames=%llu render_queue_below_demand_events=%llu "
+            "render_queue_first_low_event=%llu "
+            "wasapi_stream_latency_100ns=%llu\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_.load()),
             static_cast<unsigned long long>(max_callback_us_.load()),
@@ -551,7 +563,25 @@ private:
             static_cast<unsigned long long>(stats.native_direct_frames),
             static_cast<unsigned long long>(stats.underrun_events),
             static_cast<unsigned long long>(stats.largest_underrun_event_frames),
-            static_cast<unsigned long long>(stats.first_underrun_render_event));
+            static_cast<unsigned long long>(stats.first_underrun_render_event),
+            static_cast<unsigned long long>(timing.buckets[0]),
+            static_cast<unsigned long long>(timing.buckets[1]),
+            static_cast<unsigned long long>(timing.buckets[2]),
+            static_cast<unsigned long long>(timing.buckets[3]),
+            static_cast<unsigned long long>(timing.buckets[4]),
+            static_cast<unsigned long long>(timing.buckets[5]),
+            static_cast<unsigned long long>(timing.buckets[6]),
+            static_cast<unsigned long long>(timing.buckets[7]),
+            static_cast<unsigned long long>(timing.samples?
+                timing.total_us/timing.samples:0ULL),
+            static_cast<unsigned long long>(timing.longest_over_budget_streak),
+            static_cast<unsigned long long>(timing.first_over_budget_block),
+            static_cast<unsigned long long>(stats.render_queue_samples),
+            static_cast<unsigned long long>(stats.render_queue_min_frames),
+            static_cast<unsigned long long>(stats.render_queue_max_frames),
+            static_cast<unsigned long long>(stats.render_queue_below_demand_events),
+            static_cast<unsigned long long>(stats.render_queue_first_low_event),
+            static_cast<unsigned long long>(info.stream_latency_100ns));
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -562,6 +592,7 @@ private:
     std::uint32_t requested_period_ms_{5};
     std::size_t queue_target_frames_{2*static_cast<std::size_t>(kFrames)};
     std::atomic<std::uint64_t> callback_count_{0};
+    modern_asio::CallbackTimingTracker callback_timings_{};
     std::atomic<std::uint64_t> max_callback_us_{0};
     std::atomic<std::uint64_t> over_budget_callbacks_{0};
     std::atomic<std::uint64_t> producer_wakes_{0};

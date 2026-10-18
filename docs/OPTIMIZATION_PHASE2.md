@@ -82,3 +82,7 @@ User confirmed direct native Float32 output worked and sound was correct. All `n
 ## User follow-up: default 1024-frame target sustained loaded playback without underruns
 
 After restoring `audio_buffer_target_frames=1024`, 76.043s loaded Cubase session reported **underrun_frames=0** despite worst host callback 18.608ms and 3 callbacks exceeding the normal 10.67ms ASIO block deadline. 100% of 3648576 submitted frames took the native direct output path. With 512-target earlier, 2976 frames were missing over 48.635s, with a much larger worst host callback of 30.371ms. Evidence favors retaining 1024 default, but is not controlled DSP workload, so the queue setting is not conclusively the only cause. Source revision with event-based telemetry was NOT yet running (no new fields in logs). See docs/CUBASE_PHASE2_UNDERRUN_REVIEW.md.
+
+## Phase 3 telemetry follow-up
+
+Instrumentation now captures 8-bin ASIO callback durations, bursty overbudget timing, and sampled WASAPI FIFO pressure without changing rendering. Windows and Cubase results await validation. See docs/OPTIMIZATION_PHASE3_LOAD_TELEMETRY.md.

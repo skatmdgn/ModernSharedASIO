@@ -143,6 +143,7 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     submitted_frames_.store(0);
     native_direct_frames_.store(0);
     underrun_tracker_.reset_stopped();
+    render_queue_tracker_.reset_stopped();
     last_stream_hresult_.store(S_OK);
     coherent_clock_.reset_stopped();
     try {
@@ -177,11 +178,14 @@ OutputInfo WasapiSharedRenderer::device_info() const noexcept {
 }
 OutputStats WasapiSharedRenderer::stats() const noexcept {
     const auto underrun=underrun_tracker_.snapshot();
+    const auto queued=render_queue_tracker_.snapshot();
     return {render_events_.load(), underrun_frames_.load(), errors_.load(),
             producer_failures_.load(),clock_reads_.load(),clock_device_position_.load(),
             clock_qpc_100ns_.load(),clock_frequency_.load(),
             submitted_frames_.load(),native_direct_frames_.load(),
             underrun.events,underrun.max_missing_frames,underrun.first_event,
+            queued.samples,queued.minimum_frames,queued.maximum_frames,
+            queued.below_demand_events,queued.first_below_demand_event,
             last_stream_hresult_.load()};
 }
 bool WasapiSharedRenderer::read_clock_observation(ClockObservation& out) const noexcept {
@@ -285,6 +289,11 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         if (padding > info.buffer_frames) return E_UNEXPECTED;
         const UINT32 frames = info.buffer_frames - padding;
         if (!frames) return S_OK;
+        if(allow_host_callback && asynchronous_source_) {
+            // A sampled queue snapshot, not a measurement of physical latency.
+            render_queue_tracker_.observe(queue_.available_frames(),frames,
+                render_events_.load(std::memory_order_relaxed));
+        }
         // Device position units are clock-frequency ticks; QPC is 100ns.
         if (audio_clock && (++clock_sample_counter % 8u) == 0u) {
             UINT64 ticks = 0, qpc100ns = 0;

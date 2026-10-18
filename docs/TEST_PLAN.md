@@ -84,3 +84,7 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 
 63. User follow-up accepted **queue target 1024 at 48k/512**: 76.043s real music session 7127 ASIO callbacks, 6523 nonzero, 0 underrun frames, 0 stream/callback errors, 3 callback overruns with max 18608us. Direct native frames equal submitted 3648576. Compare prior 512 target 2976 underrun (max callback 30371us); workload unmatched so not a controlled causal proof. Keep default two ASIO blocks recommended for now.
 64. User logs lack newly implemented `underrun_events` fields; do not count them as execution or Windows verification of the 18th CTest/latest diagnostics. Repeat same load with new instrumented DLL at default setting only after user is ready. Measure actual physical latency before proposing lower-buffer mode; avoid simultaneous configuration changes.
+
+65. Phase-3 portable modern_asio_realtime_load_tests: verify callback duration histogram buckets, maximum over-budget streak/first block, queue min/max and concurrent atomic snapshot; Clang ASan/UBSan and GCC Release PASS.
+66. Expect 19 CTests on Windows; compare real Cubase with ASIO block=512, queue target=1024, TimeInfo disabled. Parse cb_time_hist_500_1k_2k_4k_8k_12k_20k_us and render_queue_below_demand_events (queue pressure only; underrun_frames is authoritative).
+67. Do not infer less audio latency from the phase-3 telemetry or change default buffers on this commit. Preserve A/B opposite-half output rule and verified phase-2 stable branch.
