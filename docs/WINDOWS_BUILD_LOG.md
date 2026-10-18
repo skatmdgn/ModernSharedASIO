@@ -139,3 +139,7 @@ No Win32 real-device builds or Cubase retests have been run yet for this commit.
 ## Phase 2 WASAPI direct render — local validation only (2026-10-18)
 
 Changed asynchronous native stereo Float32 renderer to FIFO.pop directly into IAudioRenderClient::GetBuffer output; all other formats still stage/convert through scratch. New native_direct_frames counter. Linux Clang 17 ASan+UBSan native differential: 60,000 random cases PASS; capacity-overflow device chunk PASS; prior SPSC and pacing tests rerun PASS. -O3 1056-frame microbenchmark staged 0.3095 us/call, direct 0.2173 us/call (1.425x memory-path). Do not extrapolate to Cubase latency/CPU. MSVC Windows test (17 CTests) and Cubase user acceptance pending. See docs/OPTIMIZATION_PHASE2.md.
+
+## 2026-10-18 first real Cubase phase-2 playback log: functioning but low queue underruns
+
+Running binary confirmed native WASAPI direct for all 3 sessions. In busy 48.635s run: 4548 callbacks, 3950 non-silent, max 30371us callback, 4 over-budget callbacks, 2976 underrun frames, 0 stream/callback errors. Queue target 512 (experimental one-block), rather than proven default 1024; device 480-frame engine period and buffer 1056. User heard no problem; **not** zero-underrun. Recommend revert QueueTargetBlocks override for controlled same-load A/B. Added read-only realtime-safe event instrumentation after this user log; code not yet Windows built. See docs/CUBASE_PHASE2_UNDERRUN_REVIEW.md.

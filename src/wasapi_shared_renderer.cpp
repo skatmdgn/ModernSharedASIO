@@ -142,6 +142,7 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     clock_frequency_.store(0);
     submitted_frames_.store(0);
     native_direct_frames_.store(0);
+    underrun_tracker_.reset_stopped();
     last_stream_hresult_.store(S_OK);
     coherent_clock_.reset_stopped();
     try {
@@ -175,10 +176,13 @@ OutputInfo WasapiSharedRenderer::device_info() const noexcept {
     return info_;
 }
 OutputStats WasapiSharedRenderer::stats() const noexcept {
+    const auto underrun=underrun_tracker_.snapshot();
     return {render_events_.load(), underrun_frames_.load(), errors_.load(),
             producer_failures_.load(),clock_reads_.load(),clock_device_position_.load(),
             clock_qpc_100ns_.load(),clock_frequency_.load(),
-            submitted_frames_.load(),native_direct_frames_.load(),last_stream_hresult_.load()};
+            submitted_frames_.load(),native_direct_frames_.load(),
+            underrun.events,underrun.max_missing_frames,underrun.first_event,
+            last_stream_hresult_.load()};
 }
 bool WasapiSharedRenderer::read_clock_observation(ClockObservation& out) const noexcept {
     return coherent_clock_.read(out);
@@ -301,6 +305,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         // The producer remains paced by actual WASAPI device demand.
         UINT32 remaining = frames;
         UINT32 offset = 0;
+        std::uint64_t missing_this_event=0;
         const auto capacity = static_cast<UINT32>(
             std::min<std::size_t>(queue_.capacity_frames(), UINT32_MAX));
         while (remaining) {
@@ -325,12 +330,17 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
                                     (static_cast<std::size_t>(offset)+got)*2,
                                 0,static_cast<std::size_t>(batch-got)*2*sizeof(float));
                 // Initial startup silence is intentional, not a device underrun.
-                if(allow_host_callback)
+                if(allow_host_callback) {
                     underrun_frames_.fetch_add(batch-got,std::memory_order_relaxed);
+                    missing_this_event+=batch-got;
+                }
             }
             offset += batch;
             remaining -= batch;
         }
+        if(missing_this_event)
+            underrun_tracker_.record(missing_this_event,
+                render_events_.load(std::memory_order_relaxed));
         if(!native_direct) {
             result=render->GetBuffer(frames,&dest);
             if(FAILED(result))return result;

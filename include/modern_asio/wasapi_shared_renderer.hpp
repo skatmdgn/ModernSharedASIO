@@ -15,6 +15,7 @@
 #include "modern_asio/spsc_stereo_ring.hpp"
 #include "modern_asio/engine_demand.hpp"
 #include "modern_asio/clock_observation.hpp"
+#include "modern_asio/underrun_event_tracker.hpp"
 
 namespace modern_asio {
 struct OutputInfo {
@@ -36,6 +37,9 @@ struct OutputStats {
     std::uint64_t clock_frequency{0};
     std::uint64_t submitted_frames{0};
     std::uint64_t native_direct_frames{0};
+    std::uint64_t underrun_events{0};
+    std::uint64_t largest_underrun_event_frames{0};
+    std::uint64_t first_underrun_render_event{UINT64_MAX};
     HRESULT last_stream_hresult{S_OK};
 };
 
@@ -91,6 +95,7 @@ private:
     std::atomic<std::uint64_t> clock_frequency_{0};
     std::atomic<std::uint64_t> submitted_frames_{0};
     std::atomic<std::uint64_t> native_direct_frames_{0};
+    UnderrunEventTracker underrun_tracker_{};
     std::atomic<HRESULT> last_stream_hresult_{S_OK};
     ClockObservationChannel coherent_clock_{};
 };

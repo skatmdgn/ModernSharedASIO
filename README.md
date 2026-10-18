@@ -145,3 +145,7 @@ Working Cubase 8.0.40 source is protected on GitHub branch `stable/cubase8-verif
 ### Optimization phase 2: direct native float32 WASAPI output (Windows verification pending)
 
 For a native Windows shared-mode **stereo Float32** endpoint and asynchronous ASIO source, FIFO PCM now writes directly into `IAudioRenderClient::GetBuffer` output memory, removing an intermediate scratch-buffer copy; all other formats retain the previous conversion path. The experimental driver logs `native_direct_frames` to confirm that optimization activated. Local Clang 17 ASan/UBSan differential 60k cases PASS and a 1056-frame microbenchmark showed 0.3095->0.2173 us/call (~1.425x for the narrow transfer only). **Not** a proven Cubase-wide or latency improvement. Windows total expected CTests: 17, still to be checked; original double-buffer handoff and 512-frame default remain untouched. See [Phase 2](docs/OPTIMIZATION_PHASE2.md).
+
+### Loaded Cubase low-queue test: audible playback PASS, hidden underruns (2026-10-18)
+
+User's phase-2 log confirms 100% native Float32 direct WASAPI rendering and functioning Audio/MIDI, but **QueueTargetBlocks=1** (512 frames) yielded **2,976 underrun frames (~62ms cumulative) and four over-budget host callbacks** in a 48.6s busy session. Don't classify the 1-block low-latency mode as stable. Default 2-block/1024-frame mode remains recommended until separately verified. New output diagnostics break underruns down by render events without changing PCM. See [Loaded Cubase run analysis](docs/CUBASE_PHASE2_UNDERRUN_REVIEW.md).

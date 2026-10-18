@@ -74,3 +74,7 @@ Expect nonzero `native_direct_frames` when Cubase opened a native float32 stereo
 2. Introduce **opt-in 256-frame ASIO buffer** only with adapted timing, A/B output mapping and VST stress regression. Avoid changing the proven 512-frame default.
 3. Profile Cubase/DPC scheduling jitter and producer/event wakeups under 1/10/50 tracks. Consider host callback scheduling tuning only with evidence.
 4. Test actual output device formats, reconfiguration, long-run playback and failed-start/teardown behavior.
+
+## Real Cubase session update — 2026-10-18
+
+User confirmed direct native Float32 output worked and sound was correct. All `native_direct_frames` equaled submitted frames. Crucially, `audio_buffer_target_frames=512` (experimental QueueTargetBlocks=1) with one loaded session yielding 2976 underrun frames across 48.635 seconds; callback max 30371us, 4 callback overruns. This **fails a zero-underrun stability gate** despite no audible issue. See [actual Cubase underrun review](CUBASE_PHASE2_UNDERRUN_REVIEW.md). Do not promote one-block mode as default. Event-level telemetry added; full Windows retest pending.
