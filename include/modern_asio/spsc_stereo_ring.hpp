@@ -76,11 +76,14 @@ public:
         return count;
     }
 
-    // Use only after both producer and consumer threads have stopped.
+    // Use only after both producer and consumer have stopped. Published
+    // indices define which audio is valid; every push/push_planar overwrites
+    // BOTH samples of each published stereo frame. There is no need to clear
+    // the full 256 KiB ring on each ASIO start (we retain allocation/data but
+    // make old frames inaccessible). Never call while either worker is live.
     void clear_stopped() noexcept {
-        read_.store(0, std::memory_order_relaxed);
-        write_.store(0, std::memory_order_relaxed);
-        std::fill(samples_.begin(), samples_.end(), 0.0f);
+        read_.store(0,std::memory_order_relaxed);
+        write_.store(0,std::memory_order_relaxed);
     }
     std::size_t available_frames() const noexcept {
         const auto read = read_.load(std::memory_order_acquire);

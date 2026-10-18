@@ -13,7 +13,7 @@ if(-not $SkipTests) {
   if($LASTEXITCODE -ne 0) { throw 'Benchmark build unit tests failed' }
 }
 $dir = Join-Path $build 'Release'
-$executables = @('modern_asio_bridge_bench.exe','modern_asio_native_float32_bench.exe')
+$executables = @('modern_asio_bridge_bench.exe','modern_asio_native_float32_bench.exe','modern_asio_pcm_scan_bench.exe')
 foreach($name in $executables) {
   $exe = Join-Path $dir $name
   if(-not (Test-Path $exe)) { throw "Benchmark executable missing: $exe" }

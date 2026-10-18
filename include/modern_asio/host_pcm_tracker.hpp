@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include "modern_asio/pcm_channel_scan.hpp"
 namespace modern_asio {
 // One owner: only the ASIO producer calls observe(), and the control thread
 // reads snapshot_stopped() AFTER joining the producer thread. No atomic
@@ -23,28 +24,13 @@ public:
     void reset_stopped() noexcept { stats_={}; }
     void observe(const float* left, const float* right,
                  std::size_t frames,std::uint64_t block_ordinal) noexcept {
-        bool left_nonzero=false,right_nonzero=false,invalid=false;
-        float left_peak=0.0f,right_peak=0.0f;
-        for(std::size_t i=0;i<frames;++i){
-            if(left){
-                const float v=left[i];
-                if(!std::isfinite(v))invalid=true;
-                else{
-                    const float mag=std::fabs(v);
-                    if(mag>left_peak)left_peak=mag;
-                    if(mag>0.000001f)left_nonzero=true;
-                }
-            }
-            if(right){
-                const float v=right[i];
-                if(!std::isfinite(v))invalid=true;
-                else{
-                    const float mag=std::fabs(v);
-                    if(mag>right_peak)right_peak=mag;
-                    if(mag>0.000001f)right_nonzero=true;
-                }
-            }
-        }
+        const auto left_scan=scan_pcm_channel(left,frames);
+        const auto right_scan=scan_pcm_channel(right,frames);
+        const bool left_nonzero=left_scan.nonzero;
+        const bool right_nonzero=right_scan.nonzero;
+        const bool invalid=left_scan.invalid || right_scan.invalid;
+        const float left_peak=left_scan.peak;
+        const float right_peak=right_scan.peak;
         if(!left_nonzero && !right_nonzero) ++stats_.silent_host_blocks;
         else {
             if(stats_.first_nonzero_block==UINT64_MAX)

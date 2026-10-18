@@ -163,3 +163,9 @@ At 48k/512 ASIO and 1024 FIFO target, user supplied three ASIO_STOP logs: 142ms 
 ## 2026-10-18 comprehensive optimization branch status
 
 No Windows binary built in this environment. Source-only changes in optimization/full-pass-20261018: QPC tick duration, cache constant QueryPerformanceFrequency, single-writer producer metrics, skip empty-work producer wakes, replace per-block WaitForSingleObject(0) with atomic stop. New 4 CTests active in Release via CHECK macro. Local Clang ASan+UBSan and GCC Release logic comparisons passed; 480-frame producer wake test saves 6.25% SetEvent calls under idealized load only, no whole-DAW inference. FIFO shrink benchmark inconclusive, no change. Target Windows suite 23, MSVC and Cubase pending. docs/OPTIMIZATION_FULL_PASS_20261018.md.
+
+## Full optimization pass II — isolated branch (2026-10-18)
+
+On optimization/full-pass-20261018 added 512-sample SSE2 producer diagnostic scan (50k independent scalar comparison under Clang ASan/UBSan PASS, GCC Release scan microbenchmark ~5.4x scan-only) and removal of 256KiB full ring zero on each stopped start. Ring cursor semantics tested under Clang ASan/UBSan and GCC Release, with 120000 random FIFO and 250000 concurrent frame regressions passed locally. Added two new portable tests and Release-only PCM benchmark: expect 25 Windows CTests. **MSVC Windows build / 25 tests / Cubase real-output performance NOT TESTED.** PCM/ASIO half mapping, default 512/1024 and driver registration unmodified. docs/OPTIMIZATION_FULL_PASS_20261018.md.
+
+Local SIMD revised to bitwise NaN/Infinity exponent detection before FP comparisons; Clang x64 SSE invalid exception flag remains clear in test (PASS). Re-ran 50k samples differential under ASan/UBSan and GCC -O3 microbench ~69ns SSE2 vs ~360-420ns scalar per 512-sample channel. Windows MSVC/Cubase still pending.

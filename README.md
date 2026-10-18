@@ -157,3 +157,9 @@ Added Cubase ASIO callback histogram, consecutive over-budget streak and sampled
 ### Comprehensive runtime hot-path optimization branch (2026-10-18)
 
 `optimization/full-pass-20261018` contains QPC frequency caching and raw callback tick timing, producer-owned PCM metrics (no per-callback atomic RMW for statistics), conditional producer event notifications and atomic stop polls, all preserving ASIO opposite-half mapping, PCM output, default 512 ASIO / 1024 FIFO, and WASAPI native Float32. Added Release-safe regressions (expected Windows 23 CTests) and isolated no-registration x64 benchmark script. Local Clang ASan/UBSan and GCC Release logic checks PASS, **Windows/Cubase yet to be verified**. Never infer total CPU/latency improvement from modeled event wake reduction. See docs/OPTIMIZATION_FULL_PASS_20261018.md.
+
+### Additional optimized hot-path diagnostics and SPSC reset
+
+On `optimization/full-pass-20261018` (not on main), x64 SSE2 now accelerates the read-only host PCM validity/peak/silence scan; a portable scalar fallback preserves semantics. A Clang ASan/UBSan differential of 50,000 channel arrays PASS; local GCC -O3 benchmark scalar ~360ns versus SSE2 ~66ns for a 512-sample diagnostic scan. This does **not** imply 5.4x total driver CPU performance. Also skipped clearing 256KiB of unpublished FIFO storage at each stopped-state restart; loop/regression tests passed. ASIO A/B, block512, FIFO target1024 and PCM itself are unchanged. Expected full Windows CTest count now 25, Windows/Cubase not yet run. See docs/OPTIMIZATION_FULL_PASS_20261018.md.
+
+SSE2 scanner exception safety: invalid NaN/Infinity lanes are identified using integer exponent bits instead of ordered FP comparisons; local MXCSR exception flag check passed. Bench scanner-only numbers may vary between runs.

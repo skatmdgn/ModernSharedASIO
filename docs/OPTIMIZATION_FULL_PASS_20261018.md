@@ -84,3 +84,38 @@ Do NOT extrapolate benchmark copy-only ratios to whole-driver or DAW CPU; the us
 3. Output latency measurement with calibrated wired physical loopback / ASIO and WASAPI endpoint timing. Only then stabilize `getLatencies` reporting.
 4. Consider dedicated per-format SIMD conversion fast paths only if a real PCM16/24/32 or multichannel endpoint benchmark justifies complexity.
 5. Promote changes to main only after real Windows acceptance, retain the working stable refs.
+
+## Second optimization pass — SIMD diagnostics and fast FIFO reset (2026-10-18)
+
+Two additional evidence-based changes are now on this same isolated branch, **not on main**.
+
+### 6. SSE2 PCM diagnostic scan: exact finite/peak/threshold semantics
+
+- Added `include/modern_asio/pcm_channel_scan.hpp`. In x64 builds, SSE2 processes four contiguous Float32 channel samples at once; fallback scalar logic is used on platforms without SSE2. All Windows x64 CPUs support SSE2.
+- The optimized loop computes **finite-only max absolute peak**, `abs(sample)>0.000001f` nonzero flag, and NaN/Infinity detection, preserving earlier `HostPcmTracker` results. This affects only realtime diagnostic CPU work; audio samples, PCM buffering and Cubase output callbacks are unchanged.
+- `HostPcmTracker::observe()` calls the helper once per channel instead of doing scalar per-sample finite/abs/threshold comparisons for two interleaved passes. It still reports identical first/last nonzero blocks, silent block count, invalid blocks and peak values.
+- New `modern_asio_pcm_simd_scan_tests` compares 50,000 randomly sized arrays of 0..512 elements against the independent scalar reference, with nullptr, NaN, +/-Infinity, tiny/subthreshold samples and finite float maxima.
+- **Locally verified:** Clang C++20 AddressSanitizer+UndefinedBehaviorSanitizer run: **50,000/50,000 PASS**. Separate GCC x64 `-O3` microbenchmark of one 512-sample channel scan with alternating runs showed scalar **~359-361ns** vs SSE2 **~66ns**, ~**5.4x faster for diagnostic scanning only**. This is not a 5.4x driver/DAW CPU improvement; Cubase host callback and device periods are orders of magnitude larger.
+- A separate manual SSE2-vs-scalar benchmark for the *planar-to-interleaved* channel copy showed both approximately 73-77ns / 512 frames on this compiler, due to compiler auto-vectorization. Therefore **we deliberately kept the existing faster-enough PCM interleave unchanged**, rather than adding redundant SIMD that increases code complexity.
+
+### 7. Eliminate 256KiB unnecessary FIFO clearing at each ASIO start
+
+- `SpscStereoRing::clear_stopped()` now resets its SPSC read/write positions only. It no longer `std::fill()` zeros across 32768 stereo Float32 frames = **262,144 bytes (256KiB)** on every start.
+- Safety contract: clear_stopped must only run after both producer and consumer stop. Neither `pop` nor WASAPI output can read unpublished samples; after reset available_frames==0 and `pop` returns zero; a future push/push_planar writes both left/right values before incrementing the producer cursor with release semantics. Previously filled internal memory remains inaccessible until overwritten. This is **not a ring capacity reduction** or a new audio buffer policy.
+- New `modern_asio_ring_fast_reset_tests` repeats write -> clear -> attempted pop -> fresh write -> read across capacities 2,8,512,32768 and thousands of cycles, requiring **no stale audio exposure**.
+- Locally validated the index-only reset with Clang ASan/UBSan and GCC Release (PASS). Earlier 120,000-operation planar FIFO randomized differential and 250,000-frame concurrent SPSC test rerun with the reset header: **PASS**.
+- This removes work during **start/restart only**; it does not increase continuous Cubase throughput, change sample latency or prove fewer dropouts.
+
+### Build, tests and benchmarks
+
+- CMake adds 2 new portable CTests (`modern_asio_pcm_simd_scan_tests`, `modern_asio_ring_fast_reset_tests`): expected **25 Windows CTests** with ASIO DLL enabled (24 portable and 1 COM preflight). No Windows suite or real Cubase run has yet been performed on this cumulative branch.
+- `scripts/benchmark_core_windows_x64.ps1` now includes opt-in native `modern_asio_pcm_scan_bench` in the isolated Release `build-benchmark` directory, alongside the existing copy benchmarks. No driver registration or overwrite.
+- Local standalone portable tests and microbenchmarks were actually run on Linux, **not** a Windows MSVC build. The GitHub files have been statically inspected but the full modified repository has not been compiled as a whole under Windows. The full gate remains: build + 25 tests, correct Cubase Audio/MIDI, no ASIO timeline offsets and no regressions in underruns under a matched project.
+
+### Remaining audit decision
+
+Do not deploy unstable experimental ASIO-256 or EarlyProducerWake by default. Preserve ASIO 512 frames + FIFO 1024 + opposite-half handoff. Retain ring capacity 32768; shrinking it has shown no reproducible throughput win. Output `getLatencies` remains provisional and may differ when queried before/after device initialization; do not falsify physical latency by simply reporting fewer frames. Keep CI until final, per project workflow.
+
+### SSE2 exception safety check
+
+The SIMD implementation uses integer operations on IEEE-754 exponent bits to detect NaN/Infinity *before* doing any ordered floating-point compare. Invalid lanes are masked to +0. This prevents the diagnostic scanner itself from raising the SSE floating-point invalid-status flag when normal quiet NaNs/infinities occur. Local Clang x64 test verified the MXCSR invalid exception flag remains unset for mixed finite/NaN/Inf values (PASS). Scanner performance after exception-safe change in GCC -O3: ~69ns per 512-sample channel, versus ~360-420ns scalar; same order as previously reported. Strict 50k differential tests still pass. This does not validate FP trap configuration under Cubase itself.
