@@ -16,6 +16,7 @@
 #include "modern_asio/engine_demand.hpp"
 #include "modern_asio/clock_observation.hpp"
 #include "modern_asio/realtime_load_telemetry.hpp"
+#include "modern_asio/scheduler_gap_tracker.hpp"
 #include "modern_asio/underrun_event_tracker.hpp"
 
 namespace modern_asio {
@@ -46,6 +47,9 @@ struct OutputStats {
     std::uint64_t render_queue_max_frames{0};
     std::uint64_t render_queue_below_demand_events{0};
     std::uint64_t render_queue_first_low_event{UINT64_MAX};
+    std::uint64_t render_event_gap_samples{0};
+    std::uint64_t render_event_gap_max_us{0};
+    std::uint64_t render_event_gap_over_1p5x{0};
     HRESULT last_stream_hresult{S_OK};
 };
 
@@ -68,6 +72,10 @@ public:
 
     // target_period_ms=0 selects Windows default; 3 or 5 requests a smaller period.
     // NEVER acquires WASAPI exclusive mode.
+    // Control-thread only, before start(); immutable while render runs.
+    void set_scheduler_probe_enabled(bool enabled) noexcept {
+        scheduler_probe_enabled_.store(enabled,std::memory_order_relaxed);
+    }
     HRESULT start(std::uint32_t target_period_ms = 0);
     void stop() noexcept;
     // Only the render worker calls the source; never call stop() from this thread.
@@ -103,6 +111,8 @@ private:
     std::atomic<std::uint64_t> native_direct_frames_{0};
     UnderrunEventTracker underrun_tracker_{};
     RenderQueueTracker render_queue_tracker_{};
+    SchedulerGapTracker event_gap_tracker_{};
+    std::atomic<bool> scheduler_probe_enabled_{false};
     std::atomic<HRESULT> last_stream_hresult_{S_OK};
     ClockObservationChannel coherent_clock_{};
 };

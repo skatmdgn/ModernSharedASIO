@@ -144,6 +144,7 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     native_direct_frames_.store(0);
     underrun_tracker_.reset_stopped();
     render_queue_tracker_.reset_stopped();
+    event_gap_tracker_.reset_stopped();
     last_stream_hresult_.store(S_OK);
     coherent_clock_.reset_stopped();
     try {
@@ -179,6 +180,7 @@ OutputInfo WasapiSharedRenderer::device_info() const noexcept {
 OutputStats WasapiSharedRenderer::stats() const noexcept {
     const auto underrun=underrun_tracker_.snapshot();
     const auto queued=render_queue_tracker_.snapshot();
+    const auto gaps=event_gap_tracker_.snapshot();
     return {render_events_.load(), underrun_frames_.load(), errors_.load(),
             producer_failures_.load(),clock_reads_.load(),clock_device_position_.load(),
             clock_qpc_100ns_.load(),clock_frequency_.load(),
@@ -186,6 +188,7 @@ OutputStats WasapiSharedRenderer::stats() const noexcept {
             underrun.events,underrun.max_missing_frames,underrun.first_event,
             queued.samples,queued.minimum_frames,queued.maximum_frames,
             queued.below_demand_events,queued.first_below_demand_event,
+            gaps.samples,gaps.maximum_us,gaps.over_threshold,
             last_stream_hresult_.load()};
 }
 bool WasapiSharedRenderer::read_clock_observation(ClockObservation& out) const noexcept {
@@ -381,12 +384,34 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     ClientStopOwner stop_client{client.Get()};
     publish_initialized(S_OK, info);
 
+    // Disabled by default: do not issue per-event QPC queries in the
+    // production path unless explicitly benchmarking scheduler behavior.
+    const bool scheduler_probe=scheduler_probe_enabled_.load(std::memory_order_relaxed);
+    LARGE_INTEGER probe_frequency{};
+    if(scheduler_probe)QueryPerformanceFrequency(&probe_frequency);
+    const auto frequency=probe_frequency.QuadPart>0
+        ? static_cast<std::uint64_t>(probe_frequency.QuadPart):0ULL;
+    const auto expected_us=info.period_frames && info.sample_rate
+        ? static_cast<std::uint64_t>(info.period_frames)*1000000ULL/info.sample_rate:0ULL;
+    const auto late_threshold_us=expected_us*3ULL/2ULL;
+    std::uint64_t previous_render_ticks=0;
     HANDLE events[2]{stop_event_, audio_event.value};
     for (;;) {
         const DWORD wait = WaitForMultipleObjects(2, events, FALSE, 2000);
         if (wait == WAIT_OBJECT_0) break;
         if (wait == WAIT_OBJECT_0 + 1) {
-            render_events_.fetch_add(1, std::memory_order_relaxed);
+            const auto event_ordinal=render_events_.fetch_add(1,std::memory_order_relaxed)+1;
+            if(scheduler_probe && frequency){
+                LARGE_INTEGER tick{};
+                if(QueryPerformanceCounter(&tick) && tick.QuadPart>0){
+                    const auto now=static_cast<std::uint64_t>(tick.QuadPart);
+                    if(previous_render_ticks)
+                        event_gap_tracker_.observe_ticks(
+                            previous_render_ticks,now,frequency,
+                            late_threshold_us,event_ordinal);
+                    previous_render_ticks=now;
+                }
+            }
             hr = render_available(true);
             if (FAILED(hr)) {
                 last_stream_hresult_.store(hr,std::memory_order_relaxed);

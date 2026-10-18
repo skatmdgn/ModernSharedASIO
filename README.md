@@ -163,3 +163,7 @@ Added Cubase ASIO callback histogram, consecutive over-budget streak and sampled
 On `optimization/full-pass-20261018` (not on main), x64 SSE2 now accelerates the read-only host PCM validity/peak/silence scan; a portable scalar fallback preserves semantics. A Clang ASan/UBSan differential of 50,000 channel arrays PASS; local GCC -O3 benchmark scalar ~360ns versus SSE2 ~66ns for a 512-sample diagnostic scan. This does **not** imply 5.4x total driver CPU performance. Also skipped clearing 256KiB of unpublished FIFO storage at each stopped-state restart; loop/regression tests passed. ASIO A/B, block512, FIFO target1024 and PCM itself are unchanged. Expected full Windows CTest count now 25, Windows/Cubase not yet run. See docs/OPTIMIZATION_FULL_PASS_20261018.md.
 
 SSE2 scanner exception safety: invalid NaN/Infinity lanes are identified using integer exponent bits instead of ordered FP comparisons; local MXCSR exception flag check passed. Bench scanner-only numbers may vary between runs.
+
+### Optional scheduler gap profiling (2026-10-18)
+
+The full-pass experimental branch supports opt-in DWORD `EnableSchedulerProbe=1`: records producer wake lag and WASAPI render event spacing, without changing ASIO/PCM or adding QPC calls while disabled. Added one portable regression (Clang ASan+UBSan and GCC Release PASS) and read-only PowerShell `scripts/summarize_asio_stops.ps1` for comparing sessions. Expected Windows CTests 26; full Windows build, pwsh script and real Cubase remain unverified. Details: [Scheduler probe](docs/SCHEDULER_PROBE.md).

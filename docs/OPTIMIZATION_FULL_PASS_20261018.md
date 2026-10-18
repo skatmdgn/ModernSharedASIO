@@ -119,3 +119,7 @@ Do not deploy unstable experimental ASIO-256 or EarlyProducerWake by default. Pr
 ### SSE2 exception safety check
 
 The SIMD implementation uses integer operations on IEEE-754 exponent bits to detect NaN/Infinity *before* doing any ordered floating-point compare. Invalid lanes are masked to +0. This prevents the diagnostic scanner itself from raising the SSE floating-point invalid-status flag when normal quiet NaNs/infinities occur. Local Clang x64 test verified the MXCSR invalid exception flag remains unset for mixed finite/NaN/Inf values (PASS). Scanner performance after exception-safe change in GCC -O3: ~69ns per 512-sample channel, versus ~360-420ns scalar; same order as previously reported. Strict 50k differential tests still pass. This does not validate FP trap configuration under Cubase itself.
+
+## Phase3 scheduling probe extension — optional, not runtime speed claim
+
+Added optional QPC sampling at producer wake return and WASAPI render event dispatch; disabled by default via absent HKCU EnableSchedulerProbe. Collects estimated delays and event spacing to distinguish potential OS scheduling from actual host DSP spikes, not DPC proof. Added one CTest, expected 26 Windows tests. Standalone Clang sanitizer/GCC release PASS. New read-only PowerShell log summary. Windows/Cubase/pwsh verification pending. docs/SCHEDULER_PROBE.md.

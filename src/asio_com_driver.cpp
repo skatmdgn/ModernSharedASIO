@@ -18,6 +18,7 @@
 #include "modern_asio/asio_double_buffer_handoff.hpp"
 #include "modern_asio/realtime_load_telemetry.hpp"
 #include "modern_asio/qpc_time_math.hpp"
+#include "modern_asio/scheduler_gap_tracker.hpp"
 #include "modern_asio/producer_wake_policy.hpp"
 #include "modern_asio/host_pcm_tracker.hpp"
 #include <mmdeviceapi.h>
@@ -120,6 +121,19 @@ std::uint32_t configured_queue_target_blocks() noexcept {
     return valid?value:2;
 }
 
+// Optional scheduler probe. No extra QPC calls in the normal audio path.
+// HKCU\Software\ModernSharedASIO\EnableSchedulerProbe (DWORD=1).
+bool configured_scheduler_probe() noexcept {
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\ModernSharedASIO",
+                     0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;
+    DWORD val=0,type=0,size=sizeof(DWORD);
+    const bool enabled=RegQueryValueExW(key,L"EnableSchedulerProbe",nullptr,
+        &type,reinterpret_cast<BYTE*>(&val),&size)==ERROR_SUCCESS &&
+        type==REG_DWORD && size==sizeof(DWORD) && val==1;
+    RegCloseKey(key);
+    return enabled;
+}
 bool configured_disable_time_info() noexcept {
     // The physical IAudioClock-to-ASIOTime mapping is not validated for Cubase.
     // Do not advertise ASIO TimeInfo by default until it is calibrated.
@@ -198,6 +212,11 @@ public:
         latency_queries_.store(0);
         last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
+        scheduler_probe_enabled_=configured_scheduler_probe();
+        wake_gap_tracker_.reset_stopped();
+        last_request_ticks_.store(0,std::memory_order_relaxed);
+        probe_wake_ordinal_=0;
+        render_.set_scheduler_probe_enabled(scheduler_probe_enabled_);
         queue_target_frames_=configured_queue_target_blocks()*
             static_cast<std::size_t>(kFrames);
         callback_budget_us_=rate_
@@ -240,8 +259,13 @@ public:
             put_text(error_,"Device mix sample rate changed; reload driver",sizeof(error_));
             return ASE_NoClock;
         }
-        // Wake DSP producer for the next render event.
-        if(producer_wake_event_)SetEvent(producer_wake_event_);
+        // Host callbacks still run only on the producer thread. The initial
+        // wake is observed separately from WASAPI-triggered callbacks.
+        if(producer_wake_event_){
+            if(scheduler_probe_enabled_)
+                last_request_ticks_.store(qpc_ticks(),std::memory_order_release);
+            SetEvent(producer_wake_event_);
+        }
         return ASE_OK;
     }
     ASIOError stop() override {
@@ -359,6 +383,8 @@ private:
         if(!modern_asio::producer_needs_wakeup(
                self->fifo_.available_frames(),self->queue_target_frames_))
             return true;
+        if(self->scheduler_probe_enabled_)
+            self->last_request_ticks_.store(qpc_ticks(),std::memory_order_release);
         const bool signaled=SetEvent(self->producer_wake_event_)!=FALSE;
         if(signaled) self->producer_wakes_.fetch_add(1,std::memory_order_relaxed);
         return signaled;
@@ -390,6 +416,14 @@ private:
             if(state!=WAIT_OBJECT_0+1){
                 callback_errors_.fetch_add(1,std::memory_order_relaxed);
                 break;
+            }
+            if(scheduler_probe_enabled_){
+                // Most recent request only: auto-reset events may coalesce.
+                // This is an estimate of producer wake delay, not a precise
+                // per-event causal link between renderer and a host callback.
+                const auto signal=last_request_ticks_.load(std::memory_order_acquire);
+                wake_gap_tracker_.observe_ticks(signal,qpc_ticks(),qpc_frequency(),
+                                               callback_budget_us_,probe_wake_ordinal_++);
             }
             const auto planned=modern_asio::producer_blocks_to_fill(
                 fifo_.available_frames(),fifo_.capacity_frames(),
@@ -479,8 +513,9 @@ private:
         const auto stats=render_.stats();
         const auto timing=callback_timings_.snapshot_stopped();
         const auto pcm=host_pcm_tracker_.snapshot_stopped();
+        const auto wakes=wake_gap_tracker_.snapshot();
         const auto stopped_wall_ns=qpc_ns();
-        char line[2400]{};
+        char line[2800]{};
         const int bytes=std::snprintf(
             line,sizeof(line),
             "ASIO_STOP rate=%u block_frames=%ld requested_period_ms=%u "
@@ -504,7 +539,12 @@ private:
             "render_queue_samples=%llu render_queue_min_frames=%llu "
             "render_queue_max_frames=%llu render_queue_below_demand_events=%llu "
             "render_queue_first_low_event=%llu "
-            "wasapi_stream_latency_100ns=%llu\n",
+            "wasapi_stream_latency_100ns=%llu "
+            "scheduler_probe=%u producer_wake_gap_samples=%llu "
+            "producer_wake_gap_mean_us=%llu producer_wake_gap_max_us=%llu "
+            "producer_wake_gap_over_budget=%llu "
+            "render_event_gap_samples=%llu render_event_gap_max_us=%llu "
+            "render_event_gap_over_1p5x=%llu\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_),
             static_cast<unsigned long long>(timing.max_us),
@@ -557,7 +597,16 @@ private:
             static_cast<unsigned long long>(stats.render_queue_max_frames),
             static_cast<unsigned long long>(stats.render_queue_below_demand_events),
             static_cast<unsigned long long>(stats.render_queue_first_low_event),
-            static_cast<unsigned long long>(info.stream_latency_100ns));
+            static_cast<unsigned long long>(info.stream_latency_100ns),
+            scheduler_probe_enabled_?1u:0u,
+            static_cast<unsigned long long>(wakes.samples),
+            static_cast<unsigned long long>(wakes.samples?
+                wakes.total_us/wakes.samples:0ULL),
+            static_cast<unsigned long long>(wakes.maximum_us),
+            static_cast<unsigned long long>(wakes.over_threshold),
+            static_cast<unsigned long long>(stats.render_event_gap_samples),
+            static_cast<unsigned long long>(stats.render_event_gap_max_us),
+            static_cast<unsigned long long>(stats.render_event_gap_over_1p5x));
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -566,6 +615,10 @@ private:
     }
     std::atomic<ULONG> ref_{1};
     std::uint32_t requested_period_ms_{5};
+    bool scheduler_probe_enabled_{false};
+    std::atomic<std::uint64_t> last_request_ticks_{0};
+    modern_asio::SchedulerGapTracker wake_gap_tracker_{};
+    std::uint64_t probe_wake_ordinal_{0}; // producer thread only
     std::size_t queue_target_frames_{2*static_cast<std::size_t>(kFrames)};
     std::uint64_t callback_count_{0}; // producer owns; only read after join
     std::uint64_t callback_budget_us_{0}; // cached before producer starts
