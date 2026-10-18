@@ -77,6 +77,20 @@ std::uint32_t configured_period_ms() noexcept {
     }
     return requested;
 }
+
+bool configured_disable_time_info() noexcept {
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\ModernSharedASIO",
+                     0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS) return false;
+    DWORD value=0,type=0,bytes=sizeof(value);
+    const bool disabled=
+        RegQueryValueExW(key,L"DisableTimeInfo",nullptr,&type,
+                         reinterpret_cast<BYTE*>(&value),&bytes)==ERROR_SUCCESS &&
+        type==REG_DWORD && bytes==sizeof(value) && value==1;
+    RegCloseKey(key);
+    return disabled;
+}
+
 void keep_max(std::atomic<std::uint64_t>& maximum,std::uint64_t value) noexcept {
     auto earlier=maximum.load(std::memory_order_relaxed);
     while(value>earlier &&
@@ -135,6 +149,12 @@ public:
         callback_errors_.store(0);
         over_budget_callbacks_.store(0);
         max_callback_us_.store(0);
+        silent_host_blocks_.store(0);
+        nonzero_left_blocks_.store(0);
+        nonzero_right_blocks_.store(0);
+        invalid_float_blocks_.store(0);
+        max_left_peak_ppm_.store(0);
+        max_right_peak_ppm_.store(0);
         producer_wakes_.store(0);
         latency_queries_.store(0);
         last_reported_latency_.store(0);
@@ -253,7 +273,9 @@ public:
             info[i].buffers[b]=planar_[info[i].channelNum][b].data();
         active_[0]=selected[0];active_[1]=selected[1];
         callbacks_=cb;
-        time_info_=cb->asioMessage && cb->bufferSwitchTimeInfo &&
+        // Diagnostic switch for real Cubase TimeInfo-vs-legacy A/B tests.
+        disable_time_info_=configured_disable_time_info();
+        time_info_=!disable_time_info_ && cb->asioMessage && cb->bufferSwitchTimeInfo &&
             cb->asioMessage(kAsioSupportsTimeInfo,0,nullptr,nullptr)==1;
         callback_timeline_.reset();buffer_index_=0;prepared_=true;return ASE_OK;
     }
@@ -340,6 +362,44 @@ private:
         if(rate_ && callback_us >=
             (static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_))
             over_budget_callbacks_.fetch_add(1,std::memory_order_relaxed);
+
+        // Compare actual ASIO output data with what the host claims to play.
+        // O(512) bounded float reads per callback; atomic counters updated once.
+        bool left_has_audio=false,right_has_audio=false,invalid_samples=false;
+        float left_peak=0.0f,right_peak=0.0f;
+        const float* left=active_[0]?planar_[0][index].data():nullptr;
+        const float* right=active_[1]?planar_[1][index].data():nullptr;
+        for(long f=0;f<kFrames;++f){
+            if(left){
+                const float v=left[f];
+                if(!std::isfinite(v))invalid_samples=true;
+                else {
+                    const float a=std::fabs(v);
+                    if(a>left_peak)left_peak=a;
+                    if(a>0.000001f)left_has_audio=true;
+                }
+            }
+            if(right){
+                const float v=right[f];
+                if(!std::isfinite(v))invalid_samples=true;
+                else {
+                    const float a=std::fabs(v);
+                    if(a>right_peak)right_peak=a;
+                    if(a>0.000001f)right_has_audio=true;
+                }
+            }
+        }
+        if(!left_has_audio && !right_has_audio)
+            silent_host_blocks_.fetch_add(1,std::memory_order_relaxed);
+        if(left_has_audio)nonzero_left_blocks_.fetch_add(1,std::memory_order_relaxed);
+        if(right_has_audio)nonzero_right_blocks_.fetch_add(1,std::memory_order_relaxed);
+        if(invalid_samples)invalid_float_blocks_.fetch_add(1,std::memory_order_relaxed);
+        const auto peak_ppm=[](float peak)->std::uint64_t{
+            return static_cast<std::uint64_t>(
+                static_cast<double>(std::min(peak,1000.0f))*1000000.0);
+        };
+        keep_max(max_left_peak_ppm_,peak_ppm(left_peak));
+        keep_max(max_right_peak_ppm_,peak_ppm(right_peak));
         const auto accepted=bridge_.submit(active_[0]?planar_[0][index].data():nullptr,
                                            active_[1]?planar_[1][index].data():nullptr,kFrames);
         if(accepted!=kFrames){
@@ -371,7 +431,10 @@ private:
             "callback_errors=%llu producer_wakes=%llu wasapi_render_events=%llu "
             "underrun_frames=%llu stream_errors=%llu producer_failures=%llu "
             "last_hr=0x%08lx audio_buffer_target_frames=%llu "
-            "asio_time_info=%u latency_queries=%llu last_reported_latency_frames=%ld\n",
+            "asio_time_info=%u latency_queries=%llu last_reported_latency_frames=%ld "
+            "disable_time_info=%u host_silent_blocks=%llu host_nonzero_left=%llu "
+            "host_nonzero_right=%llu host_invalid_float_blocks=%llu "
+            "host_peak_left_ppm=%llu host_peak_right_ppm=%llu\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_.load()),
             static_cast<unsigned long long>(max_callback_us_.load()),
@@ -386,7 +449,14 @@ private:
             static_cast<unsigned long long>(2*kFrames),
             time_info_ ? 1u : 0u,
             static_cast<unsigned long long>(latency_queries_.load()),
-            last_reported_latency_.load());
+            last_reported_latency_.load(),
+            disable_time_info_ ? 1u : 0u,
+            static_cast<unsigned long long>(silent_host_blocks_.load()),
+            static_cast<unsigned long long>(nonzero_left_blocks_.load()),
+            static_cast<unsigned long long>(nonzero_right_blocks_.load()),
+            static_cast<unsigned long long>(invalid_float_blocks_.load()),
+            static_cast<unsigned long long>(max_left_peak_ppm_.load()),
+            static_cast<unsigned long long>(max_right_peak_ppm_.load()));
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -401,6 +471,13 @@ private:
     std::atomic<std::uint64_t> producer_wakes_{0};
     std::atomic<std::uint64_t> latency_queries_{0};
     std::atomic<long> last_reported_latency_{0};
+    bool disable_time_info_{false};
+    std::atomic<std::uint64_t> silent_host_blocks_{0};
+    std::atomic<std::uint64_t> nonzero_left_blocks_{0};
+    std::atomic<std::uint64_t> nonzero_right_blocks_{0};
+    std::atomic<std::uint64_t> invalid_float_blocks_{0};
+    std::atomic<std::uint64_t> max_left_peak_ppm_{0};
+    std::atomic<std::uint64_t> max_right_peak_ppm_{0};
     modern_asio::SpscStereoRing fifo_{32768};
     modern_asio::WasapiSharedRenderer render_;
     modern_asio::AsioPlaybackBridge bridge_;
