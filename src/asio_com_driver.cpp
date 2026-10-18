@@ -1,4 +1,4 @@
-// Experimental x64 ASIO 2.3 COM driver. Windows build/Cubase runtime NOT VERIFIED.
+// Experimental x64 ASIO 2.3 COM driver. Cubase heavy-VST timing under investigation.
 // Requires external Steinberg ASIO SDK common/iasiodrv.h under applicable license.
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <cwchar>
 #include <new>
 #include <thread>
@@ -57,6 +58,30 @@ HRESULT reg_text(HKEY key,const wchar_t* name,const wchar_t* s) noexcept {
     return HRESULT_FROM_WIN32(RegSetValueExW(key,name,0,REG_SZ,
         reinterpret_cast<const BYTE*>(s),static_cast<DWORD>((std::wcslen(s)+1)*sizeof(wchar_t))));
 }
+
+// Optional per-user A/B setting: HKCU\Software\ModernSharedASIO PeriodMs.
+// 0 is the Windows default period; absent/invalid override selects 5ms.
+std::uint32_t configured_period_ms() noexcept {
+    std::uint32_t requested = 5;
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\ModernSharedASIO",
+                      0,KEY_QUERY_VALUE,&key)==ERROR_SUCCESS) {
+        DWORD value=0,type=0,bytes=sizeof(value);
+        if (RegQueryValueExW(key,L"PeriodMs",nullptr,&type,
+                            reinterpret_cast<BYTE*>(&value),&bytes)==ERROR_SUCCESS &&
+            type==REG_DWORD && bytes==sizeof(value) &&
+            (value==0||value==3||value==5||value==10))
+            requested=value;
+        RegCloseKey(key);
+    }
+    return requested;
+}
+void keep_max(std::atomic<std::uint64_t>& maximum,std::uint64_t value) noexcept {
+    auto earlier=maximum.load(std::memory_order_relaxed);
+    while(value>earlier &&
+          !maximum.compare_exchange_weak(earlier,value,std::memory_order_relaxed)) {}
+}
+
 class Driver final : public IASIO {
 public:
     Driver():render_(fifo_, &Driver::request_audio, this, kFrames, true),bridge_(fifo_) {g_objects.fetch_add(1);}
@@ -105,6 +130,12 @@ public:
     ASIOError start() override {
         if(!initialized_||!prepared_||playing_)return ASE_InvalidMode;
         fifo_.clear_stopped();
+        callback_count_.store(0);
+        callback_errors_.store(0);
+        over_budget_callbacks_.store(0);
+        max_callback_us_.store(0);
+        producer_wakes_.store(0);
+        requested_period_ms_=configured_period_ms();
         position_.store(0,std::memory_order_release);
         buffer_index_=0;
         // ASIO host can prefill output half B before start.
@@ -122,7 +153,7 @@ public:
         catch(...){stop_producer();return ASE_NoMemory;}
         // Protect buffer state before the audio engine can start rendering.
         playing_.store(true,std::memory_order_release);
-        auto hr=render_.start(0);
+        auto hr=render_.start(requested_period_ms_);
         if(FAILED(hr)){
             render_.stop();
             stop_producer();
@@ -147,9 +178,11 @@ public:
            (producer_thread_.joinable() &&
             producer_thread_.get_id()==std::this_thread::get_id()))
             return ASE_InvalidMode;
+        const bool was_playing=playing_.load(std::memory_order_acquire);
         render_.stop();
         stop_producer();
         playing_.store(false,std::memory_order_release);
+        if(was_playing) write_stopped_diagnostics();
         return ASE_OK;
     }
     ASIOError getChannels(long* in,long* out) override {
@@ -232,8 +265,10 @@ private:
     static bool request_audio(void* raw) noexcept {
         // Only signals the worker; no host DSP on WASAPI render thread.
         auto* self=static_cast<Driver*>(raw);
-        return self->producer_wake_event_ &&
-               SetEvent(self->producer_wake_event_)!=FALSE;
+        if(!self->producer_wake_event_)return false;
+        const bool signaled=SetEvent(self->producer_wake_event_)!=FALSE;
+        if(signaled) self->producer_wakes_.fetch_add(1,std::memory_order_relaxed);
+        return signaled;
     }
     void stop_producer() noexcept {
         if(producer_stop_event_)SetEvent(producer_stop_event_);
@@ -275,6 +310,7 @@ private:
         // Only the ASIO producer thread calls Cubase host callbacks.
         if(!prepared_||!callbacks_)return false;
         const long index=buffer_index_;
+        const auto start_ns=qpc_ns();
         try {
             if(time_info_ && callbacks_->bufferSwitchTimeInfo){
                 ASIOTime time{};
@@ -291,6 +327,13 @@ private:
             callback_errors_.fetch_add(1,std::memory_order_relaxed);
             return false;
         }
+        const auto end_ns=qpc_ns();
+        const auto callback_us=end_ns>=start_ns ? (end_ns-start_ns)/1000 : 0;
+        callback_count_.fetch_add(1,std::memory_order_relaxed);
+        keep_max(max_callback_us_,callback_us);
+        if(rate_ && callback_us >=
+            (static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_))
+            over_budget_callbacks_.fetch_add(1,std::memory_order_relaxed);
         const auto accepted=bridge_.submit(active_[0]?planar_[0][index].data():nullptr,
                                            active_[1]?planar_[1][index].data():nullptr,kFrames);
         if(accepted!=kFrames){
@@ -301,7 +344,51 @@ private:
         buffer_index_^=1;
         return true;
     }
+    // Best-effort append on the ASIO host control thread after both audio
+    // threads have joined. No filesystem access from realtime callbacks.
+    void write_stopped_diagnostics() noexcept {
+        wchar_t path[MAX_PATH]{};
+        const DWORD n=GetTempPathW(MAX_PATH,path);
+        if(!n || n>=MAX_PATH-40 ||
+           wcscat_s(path,L"ModernSharedASIO-debug.log")!=0) return;
+        const HANDLE file=CreateFileW(path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,
+                                      nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file==INVALID_HANDLE_VALUE) return;
+        const auto info=render_.device_info();
+        const auto stats=render_.stats();
+        char line[1200]{};
+        const int bytes=std::snprintf(
+            line,sizeof(line),
+            "ASIO_STOP rate=%u block_frames=%ld requested_period_ms=%u "
+            "engine_period_frames=%u wasapi_buffer_frames=%u callbacks=%llu "
+            "max_host_callback_us=%llu callback_over_block_budget=%llu "
+            "callback_errors=%llu producer_wakes=%llu wasapi_render_events=%llu "
+            "underrun_frames=%llu stream_errors=%llu producer_failures=%llu "
+            "last_hr=0x%08lx audio_buffer_target_frames=%llu\n",
+            rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
+            static_cast<unsigned long long>(callback_count_.load()),
+            static_cast<unsigned long long>(max_callback_us_.load()),
+            static_cast<unsigned long long>(over_budget_callbacks_.load()),
+            static_cast<unsigned long long>(callback_errors_.load()),
+            static_cast<unsigned long long>(producer_wakes_.load()),
+            static_cast<unsigned long long>(stats.render_events),
+            static_cast<unsigned long long>(stats.underrun_frames),
+            static_cast<unsigned long long>(stats.errors),
+            static_cast<unsigned long long>(stats.producer_failures),
+            static_cast<unsigned long>(stats.last_stream_hresult),
+            static_cast<unsigned long long>(2*kFrames));
+        if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
+            DWORD written=0;
+            WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
+        }
+        CloseHandle(file);
+    }
     std::atomic<ULONG> ref_{1};
+    std::uint32_t requested_period_ms_{5};
+    std::atomic<std::uint64_t> callback_count_{0};
+    std::atomic<std::uint64_t> max_callback_us_{0};
+    std::atomic<std::uint64_t> over_budget_callbacks_{0};
+    std::atomic<std::uint64_t> producer_wakes_{0};
     modern_asio::SpscStereoRing fifo_{32768};
     modern_asio::WasapiSharedRenderer render_;
     modern_asio::AsioPlaybackBridge bridge_;

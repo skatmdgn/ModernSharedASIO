@@ -38,3 +38,7 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 
 28. User confirmed registry-free ASIO 2.x bufferSwitchTimeInfo mode: 471 callbacks, invalid_buffers=0, sample_position_low=241664 = 471*512+512 initial preroll; audible concurrent YouTube. Verified standalone ASIO host callback path, not Cubase.
 29. Next Cubase gate: controlled independent 64-bit registration (use scripts/register_cubase_test.ps1), optional rollback (scripts/unregister_cubase_test.ps1). Start with EMPTY 48kHz project, verify Stereo Out 1/2 connection, compare simultaneous YouTube. Review registration before running; no existing Steinberg DLL replacement or CI yet.
+
+30. Reported actual Cubase 8 audio file playback works but VSTi stutters/Serum silence and high latency. Prior standalone mock ASIO tests are insufficient: quality gate FAILED.
+31. Rebuild new 5ms period diagnostic candidate and inspect stop-time %TEMP%\ModernSharedASIO-debug.log. Compare callback_over_block_budget, max_host_callback_us, underrun_frames, stream_errors, and effective engine_period_frames.
+32. Compare PeriodMs=5 versus PeriodMs=0 in otherwise identical Cubase 48kHz empty project, record audible differences and diagnostic lines before further algorithm changes. No register/unregister needed for an unchanged COM DLL path. Distinguish plugin processing delay from driver underrun; exact cause unverified.

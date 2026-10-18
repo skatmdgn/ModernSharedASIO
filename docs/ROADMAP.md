@@ -88,3 +88,7 @@ Then Cubase 8.0.40: Devices > Device Setup > VST Audio System > ASIO Driver > Mo
 ```
 
 Registration is separate from replacing any existing Steinberg DLL. Backups under `build-win/registry-backup` are for inspection only; do NOT blindly re-import because that would overwrite later unrelated changes.
+
+### Cubase live-VST regression found 2026-10-18
+
+Cubase 8.0.40 loads the driver and plays audio waveform tracks, but heavy latency, VSTi dropouts and Serum silence occur. **CUBASE_PLAYBACK_QUALITY=FAILED.** Implemented a *diagnostic test candidate* in src/asio_com_driver.cpp: request 5ms WASAPI shared period (reversible per-user PeriodMs registry read), count host DSP callback wall times and backend underruns, append stop-time diagnostics. No heavy DSP or unnecessary features added. **New code not yet Windows compiled or retested.** See docs/CUBASE_DIAGNOSTICS.md. Do not claim resolved.

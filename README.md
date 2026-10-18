@@ -101,3 +101,7 @@ No rebuild is needed for the second host smoke mode when the new host executable
 User confirmed second real Windows ASIO 2.x TimeInfo mode output with YouTube concurrently: 471 callbacks, 0 invalid buffers, 241664 sample position. Both callback modes are now validated using the standalone mock ASIO host (not Cubase).
 
 Before Cubase 8.0.40 evaluation, opt-in reversible x64 installation instructions are in `scripts/register_cubase_test.ps1`, `scripts/unregister_cubase_test.ps1`, and `docs/WINDOWS_BUILD_LOG.md`. They target only an independent new COM CLSID / ASIO registration, and will stop rather than overwrite existing entries. The source scripts have not yet been run on Windows. Close Cubase and review the scripts before executing with Administrator privileges. The original `asioglld.dll` is not modified.
+
+## Cubase VSTi regression: diagnostics in progress
+
+Cubase 8.0.40 loads Modern Shared Audio and plays WAV audio, but VST instruments glitch, Serum may be silent and output latency is high. A new diagnostic build requests 5ms WASAPI shared periods where supported and writes callback timings and WASAPI underruns to %TEMP%\ModernSharedASIO-debug.log after IASIO::stop. An optional per-user PeriodMs override allows A/B comparison with the earlier Windows default period. This is **not yet built/tested on Windows**; users should use their old reliable ASIO driver for important work. See docs/CUBASE_DIAGNOSTICS.md.
