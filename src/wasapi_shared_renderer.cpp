@@ -1,6 +1,10 @@
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include "modern_asio/wasapi_shared_renderer.hpp"
 #include "modern_asio/period_policy.hpp"
 #include "modern_asio/engine_demand.hpp"

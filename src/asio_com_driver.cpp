@@ -1,8 +1,12 @@
 // Experimental x64 ASIO 2.3 COM driver. Windows build/Cubase runtime NOT VERIFIED.
 // Requires external Steinberg ASIO SDK common/iasiodrv.h under applicable license.
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <Windows.h>
 #include <Objbase.h>
 #include <avrt.h>
@@ -348,17 +352,17 @@ private:
 extern "C" BOOL WINAPI DllMain(HINSTANCE h,DWORD reason,LPVOID){
     if(reason==DLL_PROCESS_ATTACH){g_module=h;DisableThreadLibraryCalls(h);}return TRUE;
 }
-extern "C" __declspec(dllexport) HRESULT __stdcall DllGetClassObject(REFCLSID clsid,REFIID iid,void** out){
+STDAPI DllGetClassObject(REFCLSID clsid,REFIID iid,LPVOID* out){
     if(!out)return E_POINTER;*out=nullptr;
     if(!IsEqualCLSID(clsid,kCLSID))return CLASS_E_CLASSNOTAVAILABLE;
     auto* factory=new(std::nothrow) ClassFactory;
     if(!factory)return E_OUTOFMEMORY;
     auto hr=factory->QueryInterface(iid,out);factory->Release();return hr;
 }
-extern "C" __declspec(dllexport) HRESULT __stdcall DllCanUnloadNow(){
+STDAPI DllCanUnloadNow(void){
     return (g_objects.load()==0&&g_locks.load()==0)?S_OK:S_FALSE;
 }
-extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer(){
+STDAPI DllRegisterServer(void){
     // Explicit regsvr32 only; requires elevation for HKLM.
     wchar_t path[MAX_PATH]{};
     DWORD count=GetModuleFileNameW(g_module,path,MAX_PATH);
@@ -378,7 +382,7 @@ extern "C" __declspec(dllexport) HRESULT __stdcall DllRegisterServer(){
     RegCloseKey(key);
     return hr;
 }
-extern "C" __declspec(dllexport) HRESULT __stdcall DllUnregisterServer(){
+STDAPI DllUnregisterServer(void){
     // Never touches the existing Steinberg driver's registry entries.
     auto a=RegDeleteTreeW(HKEY_LOCAL_MACHINE,kAsioReg);
     auto b=RegDeleteTreeW(HKEY_LOCAL_MACHINE,kClassReg);

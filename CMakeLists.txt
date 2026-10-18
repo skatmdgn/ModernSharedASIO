@@ -49,6 +49,11 @@ if(WIN32)
         add_library(ModernSharedASIO SHARED src/asio_com_driver.cpp)
         target_include_directories(ModernSharedASIO PRIVATE "${ASIO_SDK_DIR}/common")
         target_link_libraries(ModernSharedASIO PRIVATE modern_asio_wasapi ole32 uuid advapi32)
+        if(MSVC)
+            # The COM entrypoints are already declared via STDAPI in Windows SDK headers.
+            # Export with a .def file instead of redeclaring with __declspec(dllexport).
+            target_link_options(ModernSharedASIO PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/src/ModernSharedASIO.def")
+        endif()
         target_compile_definitions(ModernSharedASIO PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
         add_executable(modern_asio_preflight tools/asio_com_preflight.cpp)
         target_include_directories(modern_asio_preflight PRIVATE "${ASIO_SDK_DIR}/common")

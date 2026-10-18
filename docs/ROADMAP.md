@@ -29,7 +29,7 @@
 - Windows compilation: **NOT DONE**, Windows runtime: **NOT DONE**, Cubase 8: **NOT DONE**.
 - No real-world audio improvement can be claimed yet. Source-written does NOT mean deployable.
 
-## Windows build (NOT validated)
+## Windows build (MSVC compile attempt received; DLL blocked on C2375 before fix)
 
 ```powershell
 git clone https://github.com/audiosdk/asio C:\sdk\asio
@@ -47,3 +47,7 @@ ctest --test-dir build-win -C Debug --output-on-failure
 Lightweight local tests at each meaningful batch, record SOURCE_WRITTEN / BUILD_VERIFIED / WINDOWS_RUNTIME_VERIFIED / CUBASE_VERIFIED separately. CI only at final Windows validation gate. No GitHub Actions yet.
 
 Original reverse engineering reference (read-only): https://github.com/skatmdgn/ASIOGLLD
+
+### First Windows user build: 2026-10-18
+
+Environment: Visual Studio 2022 MSVC 19.44.35228.0, Windows SDK 10.0.26100.0, Windows 11 10.0.22631. CMake configure/generate PASSED; WASAPI static library, `modern_asio_smoke.exe` and eight portable test executables compiled. The ASIO DLL failed with `C2375` for `DllGetClassObject` and `DllCanUnloadNow` because the SDK declares STDAPI linkage; warnings C4005 occurred for repeated WIN32_LEAN_AND_MEAN/NOMINMAX macros. This commit changes exports to matching STDAPI definitions, makes export names explicit via `src/ModernSharedASIO.def` under MSVC linker, and guards source macros. It also checks four exports in registry-free preflight. **Correction is source-written only; user must rebuild to confirm C2375 resolved.** No regsvr32, no Cubase test, and no CI.
