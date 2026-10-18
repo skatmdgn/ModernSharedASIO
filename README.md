@@ -109,3 +109,7 @@ Cubase 8.0.40 loads Modern Shared Audio and plays WAV audio, but VST instruments
 ### ASIO 2.3 timeline bug fix / Cubase host samples diagnosis
 
 The ASIO SDK requires **samplePosition 0 at the first ASIO bufferSwitch after start**. Our earlier driver erroneously reported **512**, conflating driver pre-roll of output buffer B with host callback progression. New AsioCallbackTimeline corrects this distinction, while the registry-free mini-host now asserts positions and double-buffer ordering. MSVC Windows build and Serum retest are PENDING. User logs showed actual WASAPI engine remained 10ms despite requesting 5ms and had zero underruns in the two longer failing VST runs. New stop-time host sample amplitude metrics and a reversible DisableTimeInfo registry A/B setting help isolate further defects without random latency tuning. See [ASIO timeline correction](docs/ASIO_TIMELINE_FIX.md).
+
+### Multi-track Cubase displacement: ASIOOutputReady contract corrected (pending Windows retest)
+
+User reports normal one-track output but greater delays, VST dropout and apparent ~16-bar timeline displacement as track count increases. A concrete ASIO SDK contract bug was found: our IASIO::outputReady() reported ASE_OK despite **not** implementing the asynchronous host-ready handshake. Fixed to ASE_NotPresent, and added COM/ASIO-host checks. This fix has **not yet been Windows built or Cubase verified**, and the 16-bar offset may have other causes. See [multi-track investigation](docs/CUBASE_MULTITRACK_OUTPUTREADY.md). Do not use the experimental driver for production.

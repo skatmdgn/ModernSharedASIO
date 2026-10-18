@@ -37,8 +37,17 @@ int wmain(int count,wchar_t** args) {
         asio->getDriverName(name);
         long input=-1,output=-1;
         auto channel_status=asio->getChannels(&input,&output);
-        std::printf("COM OK: %s v%ld; channel query=%ld in=%ld out=%ld\n",
-                    name,asio->getDriverVersion(),static_cast<long>(channel_status),input,output);
+        const auto output_ready_status=asio->outputReady();
+        std::printf("COM OK: %s v%ld; channel query=%ld in=%ld out=%ld; outputReady=%ld\n",
+                    name,asio->getDriverVersion(),static_cast<long>(channel_status),
+                    input,output,static_cast<long>(output_ready_status));
+        // This renderer has no asynchronous outputReady handshake. A false
+        // ASE_OK declaration tells Cubase it may finish host DSP asynchronously,
+        // while the driver already copied the buffers. Guard the contract.
+        if(output_ready_status!=ASE_NotPresent) {
+            std::puts("COM preflight FAILED: unsupported ASIOOutputReady must be ASE_NotPresent");
+            hr=E_FAIL;
+        }
         asio->Release();
     } else std::printf("COM factory FAILED: 0x%08lx\n",static_cast<unsigned long>(hr));
     if(factory)factory->Release();

@@ -103,3 +103,7 @@ User reports audible audio-file playback but severe delay, breaking VST instrume
 ## Cubase callback sample-position correction staged (2026-10-18)
 
 User four-stop logs: requested 5ms, actual 10ms engine at 48k, some runs with 0 underrun despite broken VST, one or two over-budget host calls (max 18.6/14.7ms). Found confirmed ASIO 2.3 first-callback sample position violation: prior mini-host `sample_position_low = callback_count*512+512` is contrary to the spec; first callback position must be 0. Source now corrects sample position, adds host contract assertions and ASIO host output amplitude diagnostic counters. User Windows build and actual Cubase/Serum retest **NOT YET DONE**. See docs/ASIO_TIMELINE_FIX.md. Original driver unchanged.
+
+## Multi-track Cubase wrong source position — outputReady implementation defect (2026-10-18)
+
+Latest user report: single track normal; heavier track count produces increasing delay, stuttering/absent VSTi and apparently a ~16-bar future audio segment at bar 0. Source audit found `IASIO::outputReady()` incorrectly claiming optional support via ASE_OK without real async completion support, directly contradicting official ASIO 2.3 returns specification. Now ASE_NotPresent plus fail-fast preflight and mini-host contract checks. This is source-written only, not yet Windows compiled or Cubase-tested; 16 bars unverified as measured offset.

@@ -34,3 +34,7 @@
 ## Verification gate
 
 New code: SOURCE_WRITTEN; Windows MSVC build: NOT YET TESTED; Cubase 5ms runtime: NOT YET TESTED; original versus new driver A/B latency: NOT TESTED. No CI, no other features, original DLL unchanged.
+
+## Additional multi-track failure and corrected outputReady declaration
+
+User reports 1-track normal playback but multi-track increasing delay, VST dropout and audio offset ~16 bars even when starting playhead at 0. Official ASIO SDK states that `ASIOOutputReady` should return ASE_OK only if the driver supports the optional host-finished-output handshake. This driver's outputReady returned ASE_OK without using the notification: a concrete false advertisement potentially unsafe for Cubase's asynchronous multitrack processing. Switched to ASE_NotPresent and added preflight and mini-host checks. Windows build and multi-track Cubase tests pending. See docs/CUBASE_MULTITRACK_OUTPUTREADY.md.

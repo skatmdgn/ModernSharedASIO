@@ -288,7 +288,14 @@ public:
     }
     ASIOError controlPanel() override {return ASE_NotPresent;}
     ASIOError future(long,void*) override {return ASE_NotPresent;}
-    ASIOError outputReady() override {return ASE_OK;}
+    ASIOError outputReady() override {
+        // ASIOOutputReady optimization is NOT implemented. The driver copies
+        // host buffers immediately after the bufferSwitch callback returns,
+        // and must not advertise the asynchronous output-ready handshake.
+        // ASIO SDK 2.3 says return ASE_NotPresent unless this mechanism is
+        // supported; ASE_OK allows hosts to defer writing their output buffer.
+        return ASE_NotPresent;
+    }
 private:
     static bool request_audio(void* raw) noexcept {
         // Only signals the worker; no host DSP on WASAPI render thread.

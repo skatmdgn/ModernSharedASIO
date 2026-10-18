@@ -162,6 +162,14 @@ int wmain(int argc, wchar_t** argv) {
             std::printf("IASIO::init FAILED: %s\n",err);
             break;
         }
+        const auto output_ready_status=asio->outputReady();
+        std::printf("ASIOOutputReady capability=%ld (expected ASE_NotPresent=%ld)\n",
+                    static_cast<long>(output_ready_status),
+                    static_cast<long>(ASE_NotPresent));
+        if(output_ready_status!=ASE_NotPresent) {
+            std::puts("Unsupported async output-ready handshake advertised; refusing test");
+            break;
+        }
         long inputs=0,outputs=0;
         if (asio->getChannels(&inputs,&outputs)!=ASE_OK || outputs<2) {
             std::puts("ASIO stereo output channels unavailable");
