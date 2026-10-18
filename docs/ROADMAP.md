@@ -15,7 +15,7 @@
 - [x] M3 clock diagnostics source — periodic IAudioClock position, clock frequency and paired QPC (100ns units).
 - [x] Batch 4: isolate startup priming from Cubase host callbacks, atomic stream active state, failure rollback, producer-failure counter and startup unit test.
 - [x] Batch 5 source: separate event-driven ASIO producer/MMCSS thread from the WASAPI consumer; bound buffering to two ASIO blocks; signal producer after render packet submission.
-- [x] Batch 5 tests: 60,000 randomized bounded-prefill inputs PASS under Clang ASan/UBSan, and register the previously missing startup-isolation test in CMake.
+- [x] Batch 5 tests: 60,000 randomized bounded-prefill inputs PASS under Clang ASan/UBSan; 60,000-event 44.1/48k SPSC pacing simulations pass under sanitizers; CMake now registers seven portable tests (full suite NOT rerun).
 - [ ] Batch 5 runtime: prove producer/consumer wakeups on Windows, measure audio deadlines, callback lifetimes, underruns and added buffering latency.
 - [ ] M3 clock accuracy — relate rendered device position to ASIO sample position/timeinfo; confirm real-device clock and drift on Windows.
 - [ ] M4 — accurate latency and time info, device enumeration/restart, xrun recovery, capture support, rate negotiation/resampling, channel layout.

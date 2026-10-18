@@ -33,3 +33,12 @@ Earlier MSA had a single WASAPI MMCSS render worker that synchronously executed 
 Get a Windows x64 MSVC + Windows SDK build with external official Steinberg ASIO SDK; run registry-free COM preflight, then a shared mode smoke test, and only afterward cautiously test Cubase 8.0.40 plus browser audio. Do not register/install the DLL at this point.
 
 Code paths: src/asio_com_driver.cpp, src/wasapi_shared_renderer.cpp, include/modern_asio/producer_fill_policy.hpp, tests/producer_fill_policy_tests.cpp.
+
+## Additional portable integration test
+
+- `tests/producer_pacing_sim_tests.cpp` now uses the **same SpscStereoRing class** as the driver, a prefilled 512-frame B-half, and a simulated producer activation after each WASAPI consumption.
+- 60,000 nominal 10ms events at 44.1 kHz: 26,460,000 frames consumed; 26,461,184 produced; 1,184 queued.
+- 60,000 nominal 10ms events at 48 kHz: 28,800,000 consumed; 28,801,024 produced; 1,024 queued.
+- Local Clang17 C++20 with ASan+UBSan passed; `producer_fill_policy_tests.cpp` also passed in optimized `-O2 -DNDEBUG` mode.
+- **Idealized limitation:** the simulated producer wakes immediately after each event. This does not model Windows scheduler latency, host callback execution time, MMCSS failures, or audio device resets. It does NOT prove glitch-free sound.
+- CMake now registers **seven** portable tests, including Batch4 startup isolation (previously unregistered). Only new Batch5 policy/pacing tests were executed in this turn; do not claim that all seven ran.
