@@ -1,6 +1,6 @@
 # ModernSharedASIO
 
-**Status: Windows x64 Debug DLL compiled successfully; all 9 tests (including registry-free COM factory preflight) passed on the user's Windows PC. Actual speaker output and Cubase 8 / YouTube simultaneous playback NOT TESTED. Do not install yet.**
+**Status: Windows x64 Debug DLL compiled and 9/9 tests passed; user confirmed audible standalone WASAPI output alongside YouTube (48kHz IAudioClient3, 500 render events, zero stream errors). ASIO callback playback and Cubase 8 remain UNTESTED. Do not install yet.**
 
 Independent Windows x64 shared-mode driver experiment targeting **Cubase 8.0.40 + YouTube simultaneously**. The original driver and reverse engineering reference are at [ASIOGLLD](https://github.com/skatmdgn/ASIOGLLD); the proprietary DLL is not copied, modified or overwritten.
 
@@ -62,3 +62,17 @@ cd C:\ModernSharedASIO
 ```
 
 Test again while YouTube is already playing, then share the printed stream counters. See [verified Windows build log](docs/WINDOWS_BUILD_LOG.md). Do not claim Cubase support or audio improvements from the successful build alone.
+
+### New manual registry-free ASIO output smoke
+
+The ordinary WASAPI smoke produced a quiet audible tone while the user's YouTube audio played, with 960 missing input frames during the five-second test but zero WASAPI stream errors. This does NOT prove ASIO host output; the next test is an isolated mock ASIO host that loads the new DLL directly, without registration:
+
+```powershell
+git pull --ff-only
+.\scripts\build_windows_x64.ps1 -AsioSdkDir C:\sdk\asio -Configuration Debug
+.\build-win\Debug\modern_asio_host_smoke.exe .\build-win\Debug\ModernSharedASIO.dll --tone
+# Optional alternative ASIO 2.x callback path:
+.\build-win\Debug\modern_asio_host_smoke.exe .\build-win\Debug\ModernSharedASIO.dll --tone --time-info
+```
+
+This executable is not part of automatic CTest; it is deliberately a manual test requiring an actual audio endpoint. Do not use regsvr32 or alter the original Steinberg driver. The source is new and has not yet been compiled by MSVC.

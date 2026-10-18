@@ -10,7 +10,9 @@
 - [x] M3 portable source — ASIO Float32 planar→interleaved stereo bridge, preallocated FIFO, buffer wrap/overflow tests.
 - [x] M3 prototype — ASIO callbacks and double-buffer producer attached to WASAPI render worker; no independent periodic software timer.
 - [x] M1–M6 Windows **Debug x64 compilation + registry-free COM factory preflight** — user MSVC 19.44 / Windows SDK 10.0.26100 log confirms 9/9 CTest passed, HEAD `4a6a68eb`.
-- [ ] Windows **Release x64 build, actual WASAPI shared-mode smoke playback, and Cubase+YouTube runtime** — these have NOT been exercised.
+- [x] Real Windows WASAPI shared playback **alongside YouTube** — audible stereo 440Hz test, 48kHz IAudioClient3, 500 events, zero stream errors (user console). 960 underrun frames merit further diagnosis.
+- [ ] Registry-free IASIO host playback: `modern_asio_host_smoke.exe` source prepared, awaiting Windows build and user real-device test.
+- [ ] Windows Release x64 build and **Cubase 8.0.40+YouTube** runtime: NOT TESTED.
 - [x] M3 event pacing — ASIO blocks produced only when WASAPI output demands frames; bounded requests/no-progress guard.
 - [x] M3 simulation — 60,000 × 441-frame and 60,000 × 480-frame consumption events, verified conservation with sanitizers.
 - [x] M3 clock diagnostics source — periodic IAudioClock position, clock frequency and paired QPC (100ns units).
@@ -28,7 +30,7 @@
 
 - Portable clock tests: Linux Clang Debug ASan+UBSan and Release passed. Full registered CTest suite was not rerun. Native Windows build is still unavailable in this environment.
 - Windows Debug x64 compilation: **VERIFIED on user's PC** (DLL and 9/9 CTest, including registry-free COM preflight). Release build: NOT DONE.
-- WASAPI actual speaker output: **NOT DONE**. Cubase 8 and simultaneous YouTube: **NOT DONE**.
+- WASAPI 440Hz actual speaker output + simultaneous YouTube: **USER VERIFIED** (basic standalone smoke). Cubase 8 ASIO playback: **NOT DONE**.
 - No real-world audio improvement can be claimed yet. Source-written does NOT mean deployable.
 
 ## Windows build (Debug x64 successful; next step: actual playback smoke)
@@ -53,3 +55,15 @@ Original reverse engineering reference (read-only): https://github.com/skatmdgn/
 ### First Windows user build: 2026-10-18
 
 Environment: Visual Studio 2022 MSVC 19.44.35228.0, Windows SDK 10.0.26100.0, Windows 11 10.0.22631. CMake configure/generate PASSED; WASAPI static library, `modern_asio_smoke.exe` and eight portable test executables compiled. The ASIO DLL failed with `C2375` for `DllGetClassObject` and `DllCanUnloadNow` because the SDK declares STDAPI linkage; warnings C4005 occurred for repeated WIN32_LEAN_AND_MEAN/NOMINMAX macros. This commit changes exports to matching STDAPI definitions, makes export names explicit via `src/ModernSharedASIO.def` under MSVC linker, and guards source macros. It also checks four exports in registry-free preflight. **Follow-up 2026-10-18: user rebuilt after fix; Debug DLL built, 9/9 CTest including COM factory preflight passed.** Four nonfatal LNK4104 warnings persist; see docs/WINDOWS_BUILD_LOG.md. No regsvr32, no actual WASAPI playback yet, no Cubase test, and no CI.
+
+### Registry-free ASIO host validation (manual only)
+
+A Windows-only, manual ASIO host smoke target now compiles alongside the DLL, without automatic CTest execution or registration. Start with a quiet five-second stereo tone from the repository directory:
+
+```powershell
+git pull --ff-only
+.\scripts\build_windows_x64.ps1 -AsioSdkDir C:\sdk\asio -Configuration Debug
+.\build-win\Debug\modern_asio_host_smoke.exe .\build-win\Debug\ModernSharedASIO.dll --tone
+```
+
+Then optionally repeat with `--tone --time-info` to test ASIO 2.x bufferSwitchTimeInfo callbacks. Neither run writes Windows ASIO registry entries. This validates ASIO engine output directly before opting into any Cubase registration. **New host test not yet built or run on Windows.** See docs/WINDOWS_BUILD_LOG.md.

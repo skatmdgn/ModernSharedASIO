@@ -29,3 +29,7 @@ Any unexecuted item stays NOT_TESTED rather than PASS.
 21. Windows smoke: capture `coherent_played_frames`, `submitted_frames` and paired `qpc_ns`. Compare only valid S_OK IAudioClock readings; S_FALSE denotes degraded position precision.
 22. Verify `last_stream_hresult` on device removal, render failure and no-event timeout; don't assume every `producer_failures` counter means a Cubase DSP callback failed (in asynchronous mode it may indicate inability to signal the producer).
 23. Never use device frame offset directly as ASIO buffer samplePosition without establishing pre-roll/silence and output latency alignment; the current ASIO sample position is generated-frame-based and not calibrated to played frames.
+
+24. Windows WASAPI smoke 440Hz and simultaneous YouTube: **user reports audible output, IAudioClient3=1, errors=0; underrun_frames=960**. Investigate whether missing frames are startup/scheduler artifacts, not automatically audible Cubase failures.
+25. Manually run registry-free `modern_asio_host_smoke.exe <DLL> --tone` after recompiling. Verify IASIO::init, getChannels, getSampleRate, getBufferSize, createBuffers, start, bufferSwitch callbacks, stop, getSamplePosition, disposeBuffers. The program does not register the driver and is NOT an automatic CTest.
+26. Repeat ASIO host smoke with `--tone --time-info` for ASIO 2.x TimeInfo path. Record callback_count and error code; test YouTube concurrently. Use moderate speaker volume and close Cubase during tests.

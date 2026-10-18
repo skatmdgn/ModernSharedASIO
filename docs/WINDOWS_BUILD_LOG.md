@@ -24,3 +24,35 @@
 **Immediate next test (do not register DLL):** `cd C:\ModernSharedASIO; .\build-win\Debug\modern_asio_smoke.exe --tone` with Windows output sound at a moderate volume. Then retry while YouTube is playing, and capture output stats/HRESULT/clock. The 440 Hz test tone is approximately -36 dBFS for five seconds. `underrun_frames` may reveal initial scheduling issues and is not automatically a CTest failure. Do not assert audio functionality until tested by user.
 
 **Phase gate:** `BUILD_VERIFIED=true (Debug x64)`, `COM_FACTORY_PREFLIGHT=true`, `WASAPI_RUNTIME_VERIFIED=false`, `CUBASE_VERIFIED=false`, `PERFORMANCE_COMPARISON=false`. Release x64 is not yet built.
+
+## User-verified standalone shared playback and YouTube coexistence (2026-10-18)
+
+User reports that the 440 Hz test tone and YouTube audio **were audible at the same time**. The following console telemetry was supplied, not simulated:
+
+```
+SHARED ONLY: rate=48000 Hz, channels=2, buffer=1056 frames, engine_period=480, IAudioClient3=1, reported_latency_100ns=0
+Quiet 440Hz tone for 5 seconds
+render_events=500 underrun_frames=960 stream_errors=0 producer_failures=0
+last_stream_hresult=0x0
+submitted_frames=241056
+coherent_played_frames=236681 paired_qpc_ns=1770048398745700 approximate_submitted_minus_played=4375
+clock_reads=62 device_ticks=1893448 frequency=384000 qpc_100ns=17700483987457
+```
+
+### Interpretation and caveats
+
+- **WASAPI_RUNTIME_VERIFIED (basic playback+YouTube)=true**, independent of ASIO registration. Directly observed: user heard both simultaneously; IAudioClient3 selected; 5 seconds / 500 event signals; no render stream HRESULT failures.
+- At 48kHz, 1056 output frames correspond to 22ms buffer capacity; event period 480 corresponds to 10ms.
+- 960 underrun frames = 20ms of aggregate missing audio, from standalone app's 10ms `sleep_until`-paced producer. **Not proof of Cubase callback underrun**, and actual timestamp of shortages was not captured.
+- `GetStreamLatency` field printed as zero. This does not establish zero end-to-end playback latency; API result and hardware path remain unmeasured.
+- The clock observation is only updated once every 8 render events (62 reads for 500 events). Its `coherent_played_frames` value is necessarily sampled earlier than final `submitted_frames`. The displayed difference of 4375 frames (91.15ms) is **not a calibrated latency measurement**. It also includes consciously prefilled startup silence.
+- `device_ticks=1893448` and `frequency=384000` represent 236681 frames at 48kHz as calculated by the exact integer conversion. This confirms the diagnostic calculation, not acoustic latency.
+- Current risk: ASIO host runtime remains **UNVERIFIED**; do not register/install DLL until a separate ASIO-specific playback path has been checked.
+
+### Next safe test: registry-free ASIO playback
+
+- A new executable `modern_asio_host_smoke.exe` loads the experimental DLL **by file path only**, constructs IASIO via DllGetClassObject, calls IASIO::init, queries stereo buffers and sample rate, creates 512-frame stereo buffers, starts the driver, and feeds them via a host-supplied ASIO callback for 5 seconds.
+- Both legacy `bufferSwitch` and time-info `bufferSwitchTimeInfo` callback modes are exposed; the latter is opt-in. Tone amplitude is ~-40dBFS. No registration/registry calls.
+- After user runs `git pull --ff-only` and manual Windows build, test with: `build-win\\Debug\\modern_asio_host_smoke.exe build-win\\Debug\\ModernSharedASIO.dll --tone` from repository directory.
+- Source currently awaiting user MSVC compilation and real playback. **Do not declare this test passed or Cubase compatibility based on the existing standalone WASAPI test.**
+
