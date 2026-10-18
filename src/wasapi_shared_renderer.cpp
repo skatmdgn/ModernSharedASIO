@@ -135,6 +135,8 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     clock_device_position_.store(0);
     clock_qpc_100ns_.store(0);
     clock_frequency_.store(0);
+    submitted_frames_.store(0);
+    coherent_clock_.reset_stopped();
     try {
         thread_ = std::thread([this, target_period_ms] { thread_main(target_period_ms); });
     } catch (...) {
@@ -168,7 +170,11 @@ OutputInfo WasapiSharedRenderer::device_info() const noexcept {
 OutputStats WasapiSharedRenderer::stats() const noexcept {
     return {render_events_.load(), underrun_frames_.load(), errors_.load(),
             producer_failures_.load(),clock_reads_.load(),clock_device_position_.load(),
-            clock_qpc_100ns_.load(),clock_frequency_.load()};
+            clock_qpc_100ns_.load(),clock_frequency_.load(),
+            submitted_frames_.load()};
+}
+bool WasapiSharedRenderer::read_clock_observation(ClockObservation& out) const noexcept {
+    return coherent_clock_.read(out);
 }
 void WasapiSharedRenderer::publish_initialized(HRESULT hr, OutputInfo info) noexcept {
     {
@@ -268,6 +274,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
             if (SUCCEEDED(audio_clock->GetPosition(&ticks, &qpc100ns))) {
                 clock_device_position_.store(ticks, std::memory_order_relaxed);
                 clock_qpc_100ns_.store(qpc100ns, std::memory_order_relaxed);
+                coherent_clock_.publish({ticks,hardware_frequency,qpc100ns});
                 clock_reads_.fetch_add(1, std::memory_order_relaxed);
             }
         }
@@ -304,6 +311,8 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
         if (FAILED(result)) return result;
         convert(scratch.data(), dest, frames, fmt);
         const auto release_hr=render->ReleaseBuffer(frames,0);
+        if(SUCCEEDED(release_hr))
+            submitted_frames_.fetch_add(frames,std::memory_order_relaxed);
         // After release, wake the separate producer for upcoming event(s).
         // On the WASAPI worker this performs only SetEvent, never host DSP.
         if (SUCCEEDED(release_hr) && allow_host_callback && asynchronous_source_ &&

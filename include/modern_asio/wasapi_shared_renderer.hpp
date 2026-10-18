@@ -14,6 +14,7 @@
 #include <thread>
 #include "modern_asio/spsc_stereo_ring.hpp"
 #include "modern_asio/engine_demand.hpp"
+#include "modern_asio/clock_observation.hpp"
 
 namespace modern_asio {
 struct OutputInfo {
@@ -33,6 +34,7 @@ struct OutputStats {
     std::uint64_t clock_device_position{0};
     std::uint64_t clock_qpc_100ns{0};
     std::uint64_t clock_frequency{0};
+    std::uint64_t submitted_frames{0};
 };
 
 // One owning control thread calls start()/stop(). Audio COM interfaces live only
@@ -60,6 +62,7 @@ public:
     bool on_render_thread() const noexcept;
     OutputInfo device_info() const noexcept;
     OutputStats stats() const noexcept;
+    bool read_clock_observation(ClockObservation& out) const noexcept;
 
 private:
     void thread_main(std::uint32_t period_ms) noexcept;
@@ -84,6 +87,8 @@ private:
     std::atomic<std::uint64_t> clock_device_position_{0};
     std::atomic<std::uint64_t> clock_qpc_100ns_{0};
     std::atomic<std::uint64_t> clock_frequency_{0};
+    std::atomic<std::uint64_t> submitted_frames_{0};
+    ClockObservationChannel coherent_clock_{};
 };
 } // namespace modern_asio
 #endif

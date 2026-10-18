@@ -63,6 +63,22 @@ int wmain(int argc, wchar_t** argv) {
     std::cout << "render_events=" << stats.render_events << " underrun_frames="
               << stats.underrun_frames << " stream_errors=" << stats.errors
               << " producer_failures=" << stats.producer_failures << "\n";
+    std::cout << "submitted_frames=" << stats.submitted_frames << "\n";
+    modern_asio::ClockObservation observation{};
+    std::uint64_t played=0, asio_ns=0;
+    if(device.read_clock_observation(observation)) {
+        const bool valid_frames=modern_asio::device_ticks_to_frames(
+            observation,info.sample_rate,played);
+        const bool valid_ns=modern_asio::qpc_to_asio_nanoseconds(
+            observation.qpc_100ns,asio_ns);
+        if(valid_frames && valid_ns) {
+            std::cout << "coherent_played_frames=" << played
+                      << " paired_qpc_ns=" << asio_ns
+                      << " approximate_submitted_minus_played="
+                      << (stats.submitted_frames >= played ? stats.submitted_frames - played : 0)
+                      << "\n";
+        } else std::cout << "clock observation conversion refused (invalid / overflow)\n";
+    } else std::cout << "no valid correlated IAudioClock observation\n";
     std::cout << "clock_reads=" << stats.clock_reads
               << " device_ticks=" << stats.clock_device_position
               << " frequency=" << stats.clock_frequency
