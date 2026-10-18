@@ -131,3 +131,7 @@ Constant audio output of material ~24 bars later at Cubase bar0 contradicts earl
 ## 2026-10-18 — user reports Cubase playback restored
 
 After the commit fixing ASIO alternating output-half semantics (d3d770b), the user confirmed “됐어! 이제 모든게 잘나와”. Previously observed fresh-project Audio bar-0 output of ~24-bars-ahead content, no programmed MIDI/VST note playback and normal live keyboard performance were the blocking context. Record a **user-observed playback PASS**, not an independently available CTest transcript or exhaustive hardware compatibility certification. Whether all 14 tests passed on this precise commit was not pasted into chat. Keep original driver registration unmodified.
+
+## Phase 1 output-preserving optimization (2026-10-18)
+
+No Win32 real-device builds or Cubase retests have been run yet for this commit. Added direct planar SPSC FIFO write (one publication instead of 4 scratch+memcpy publishes), opt-in `QueueTargetBlocks=1` (default 2, untouched), randomized equivalence and queue simulation CTests. Clang 17 Linux ASan/UBSan differential 120k, concurrent 250k frames PASS; deterministic 200k render events x4 scenarios PASS. Clang 17 -O3 microbench stereo 0.1918->0.1333 us/block, mono 0.1583->0.1162; these are not Cubase whole-system metrics. Stable Cubase-tested branch `stable/cubase8-verified-20261018`; expected Windows CTests 16. docs/OPTIMIZATION_PHASE1.md.

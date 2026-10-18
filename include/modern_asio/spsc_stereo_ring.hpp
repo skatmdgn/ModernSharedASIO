@@ -38,6 +38,28 @@ public:
         return count;
     }
 
+    // Producer-side direct planar-to-interleaved transfer: no temporary
+    // intermediate buffer and only ONE publication of the write cursor.
+    // The consumer cannot observe an incompletely written stereo block.
+    // Mirrors push() semantics on capacity and partial acceptance.
+    std::size_t push_planar(const float* left, const float* right,
+                            std::size_t frames) noexcept {
+        if ((!left && !right) || !frames) return 0;
+        const auto write = write_.load(std::memory_order_relaxed);
+        const auto read = read_.load(std::memory_order_acquire);
+        const auto used = static_cast<std::size_t>(write - read);
+        assert(used <= capacity_);
+        const auto count = std::min(frames, capacity_ - used);
+        const auto start = static_cast<std::size_t>(write) & mask_;
+        const auto first = std::min(count, capacity_ - start);
+        interleave_planar(samples_.data() + start * 2, left, right, first);
+        if (count > first)
+            interleave_planar(samples_.data(), left ? left + first : nullptr,
+                              right ? right + first : nullptr, count - first);
+        write_.store(write + count, std::memory_order_release);
+        return count;
+    }
+
     std::size_t pop(float* stereo, std::size_t frames) noexcept {
         if (!stereo || !frames) return 0;
         const auto read = read_.load(std::memory_order_relaxed);
@@ -67,6 +89,26 @@ public:
     }
 
 private:
+    static void interleave_planar(float* dst, const float* left,
+                                  const float* right, std::size_t frames) noexcept {
+        // Hoist null-channel decisions out of the per-frame loop.
+        if (left && right) {
+            for (std::size_t i=0; i<frames; ++i) {
+                dst[i*2] = left[i];
+                dst[i*2+1] = right[i];
+            }
+        } else if (left) {
+            for (std::size_t i=0; i<frames; ++i) {
+                dst[i*2] = left[i];
+                dst[i*2+1] = 0.0f;
+            }
+        } else if (right) {
+            for (std::size_t i=0; i<frames; ++i) {
+                dst[i*2] = 0.0f;
+                dst[i*2+1] = right[i];
+            }
+        }
+    }
     static std::size_t validate_capacity(std::size_t n) {
         if (n < 2 || (n & (n - 1)) != 0 ||
             n > std::numeric_limits<std::size_t>::max() / (2*sizeof(float)) ||

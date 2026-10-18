@@ -36,3 +36,7 @@ Status: source defect fixed and specialized unit test written; Cubase offset unr
 **Causal status:** the change most closely linked to recovery is the **opposite-half output handoff plus removal of redundant B prefill**, correcting a demonstrated ASIO SDK contract violation. These were applied together, so the improvement does not isolate the relative contribution of each edit. Source bug and observed behavior are strongly consistent, though an exact 24-bar displacement mechanism has not been mathematically demonstrated.
 
 **Still pending before a general release:** inspect a full Windows 14/14 CTest report and exact full-session logs for this commit; test stop/restart, sample rates, high track count and long-run resilience. Never claim those checks happened without results. Original Steinberg DLL remains unchanged.
+
+## Performance optimization preservation gate (2026-10-18)
+
+ASIO callback half->opposite hardware half mapping is a **non-negotiable regression invariant**. Performance phase 1 only changes the underlying SPSC data-copy implementation and adds a separate opt-in queue target, never buffer index/host callback/sample timeline semantics. The proven known-good commit `19f79a9` is pinned to branch `stable/cubase8-verified-20261018`. See docs/OPTIMIZATION_PHASE1.md.

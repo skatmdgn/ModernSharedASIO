@@ -88,6 +88,22 @@ std::uint32_t configured_period_ms() noexcept {
     return requested;
 }
 
+// Keep the proven working two-block FIFO target by default. A one-block
+// target is EXPLICITLY experimental and trades glitch tolerance for lower
+// queued audio. Registry is only read on start(), never on the audio thread.
+std::uint32_t configured_queue_target_blocks() noexcept {
+    HKEY key=nullptr;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\ModernSharedASIO",
+                     0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS) return 2;
+    DWORD value=0,type=0,bytes=sizeof(DWORD);
+    const bool valid=
+        RegQueryValueExW(key,L"QueueTargetBlocks",nullptr,&type,
+                         reinterpret_cast<BYTE*>(&value),&bytes)==ERROR_SUCCESS &&
+        type==REG_DWORD && bytes==sizeof(DWORD) && (value==1 || value==2);
+    RegCloseKey(key);
+    return valid?value:2;
+}
+
 bool configured_disable_time_info() noexcept {
     // The physical IAudioClock-to-ASIOTime mapping is not validated for Cubase.
     // Do not advertise ASIO TimeInfo by default until it is calibrated.
@@ -180,6 +196,8 @@ public:
         latency_queries_.store(0);
         last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
+        queue_target_frames_=configured_queue_target_blocks()*
+            static_cast<std::size_t>(kFrames);
         callback_timeline_.reset();
         callback_stamp_.publish({0,asio_system_clock_ns()});
         buffer_index_=0;
@@ -359,7 +377,7 @@ private:
             const auto planned=modern_asio::producer_blocks_to_fill(
                 fifo_.available_frames(),fifo_.capacity_frames(),
                 static_cast<std::size_t>(kFrames),
-                2*static_cast<std::size_t>(kFrames),4);
+                queue_target_frames_,4);
             for(std::size_t i=0;i<planned;++i){
                 if(WaitForSingleObject(producer_stop_event_,0)==WAIT_OBJECT_0)
                     break;
@@ -508,7 +526,7 @@ private:
             static_cast<unsigned long long>(stats.errors),
             static_cast<unsigned long long>(stats.producer_failures),
             static_cast<unsigned long>(stats.last_stream_hresult),
-            static_cast<unsigned long long>(2*kFrames),
+            static_cast<unsigned long long>(queue_target_frames_),
             time_info_ ? 1u : 0u,
             static_cast<unsigned long long>(latency_queries_.load()),
             last_reported_latency_.load(),
@@ -536,6 +554,7 @@ private:
     }
     std::atomic<ULONG> ref_{1};
     std::uint32_t requested_period_ms_{5};
+    std::size_t queue_target_frames_{2*static_cast<std::size_t>(kFrames)};
     std::atomic<std::uint64_t> callback_count_{0};
     std::atomic<std::uint64_t> max_callback_us_{0};
     std::atomic<std::uint64_t> over_budget_callbacks_{0};

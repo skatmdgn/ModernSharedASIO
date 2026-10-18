@@ -128,3 +128,7 @@ User says audio ALWAYS plays the same 24 bars ahead in a new Cubase 120BPM proje
 ### 2026-10-18 — functional recovery confirmed by Cubase user
 
 **User reports all playback working after ASIO opposite-buffer handoff correction (commit d3d770b).** This supersedes earlier documentation that the initial 24-bar-ahead Audio and programmed MIDI/VST silence regressions remain present. Mark the *reported Cubase functional blocker* resolved on user's local configuration; do not mark driver production-ready. Remaining tasks are long-run stress, rate/device switch, unload/teardown, latency measurement and documented Windows 14-CTest results. See docs/ASIO_OUTPUT_HALF_HANDOFF.md.
+
+### Phase 1 targeted optimization (2026-10-18)
+
+Working user-verified baseline preserved in `stable/cubase8-verified-20261018`. Direct planar->FIFO interleave avoids 4x128 scratch interleaves, intermediate memcpy and redundant per-chunk atomic publications. Local Clang -O3: 0.1918 -> 0.1333 us/512 stereo frames (1.44x, not end-to-end gain); random differential 120k + concurrent 250k frames ASan/UBSan PASS. Optional opt-in `QueueTargetBlocks=1` 512-frame FIFO (safe DEFAULT remains 1024), ideal 480-event mean 1264->752 queued frames; not real WASAPI latency measurement. Expected 16 Windows CTests, Cubase user verification pending. Then explore selectable 256 frame ASIO block, native float WASAPI direct buffer and measured latency. CI final only. docs/OPTIMIZATION_PHASE1.md.
