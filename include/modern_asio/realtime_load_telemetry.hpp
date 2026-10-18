@@ -14,6 +14,7 @@ struct CallbackTimingSnapshot {
     std::array<std::uint64_t,8> buckets{};
     std::uint64_t samples{0};
     std::uint64_t total_us{0};
+    std::uint64_t max_us{0};
     std::uint64_t over_budget{0};
     std::uint64_t longest_over_budget_streak{0};
     std::uint64_t first_over_budget_block{std::numeric_limits<std::uint64_t>::max()};
@@ -31,6 +32,7 @@ public:
         ++state_.buckets[bucket];
         ++state_.samples;
         state_.total_us+=elapsed_us;
+        if(elapsed_us>state_.max_us)state_.max_us=elapsed_us;
         if(budget_us && elapsed_us>=budget_us) {
             ++state_.over_budget;
             ++consecutive_;

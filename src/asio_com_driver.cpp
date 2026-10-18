@@ -17,6 +17,9 @@
 #include "modern_asio/asio_output_silence.hpp"
 #include "modern_asio/asio_double_buffer_handoff.hpp"
 #include "modern_asio/realtime_load_telemetry.hpp"
+#include "modern_asio/qpc_time_math.hpp"
+#include "modern_asio/producer_wake_policy.hpp"
+#include "modern_asio/host_pcm_tracker.hpp"
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <wrl/client.h>
@@ -51,11 +54,23 @@ void write64(ASIOSamples& s, std::uint64_t x) noexcept {
 void write64(ASIOTimeStamp& s, std::uint64_t x) noexcept {
     s.lo=static_cast<unsigned long>(x); s.hi=static_cast<unsigned long>(x>>32);
 }
+std::uint64_t qpc_frequency() noexcept {
+    // QueryPerformanceFrequency is invariant while Windows is running.
+    // Initialized during ASIO start(), before the producer is signaled.
+    static const std::uint64_t frequency=[]() noexcept {
+        LARGE_INTEGER rate{};
+        return QueryPerformanceFrequency(&rate) && rate.QuadPart>0
+            ? static_cast<std::uint64_t>(rate.QuadPart) : 0ULL;
+    }();
+    return frequency;
+}
+std::uint64_t qpc_ticks() noexcept {
+    LARGE_INTEGER now{};
+    return QueryPerformanceCounter(&now) && now.QuadPart>=0
+        ? static_cast<std::uint64_t>(now.QuadPart) : 0ULL;
+}
 std::uint64_t qpc_ns() noexcept {
-    LARGE_INTEGER now{},rate{};
-    if(!QueryPerformanceCounter(&now)||!QueryPerformanceFrequency(&rate)||rate.QuadPart<=0)return 0;
-    auto n=static_cast<std::uint64_t>(now.QuadPart),d=static_cast<std::uint64_t>(rate.QuadPart);
-    return (n/d)*1000000000ULL+((n%d)*1000000000ULL)/d;
+    return modern_asio::qpc_ticks_to_ns(qpc_ticks(),qpc_frequency());
 }
 // ASIO SDK Windows systemTime is derived from timeGetTime (milliseconds).
 // A single ASIO block has one latched position/time pair, not a new timestamp
@@ -127,12 +142,6 @@ bool configured_disable_time_info() noexcept {
     return !enabled||disabled;
 }
 
-void keep_max(std::atomic<std::uint64_t>& maximum,std::uint64_t value) noexcept {
-    auto earlier=maximum.load(std::memory_order_relaxed);
-    while(value>earlier &&
-          !maximum.compare_exchange_weak(earlier,value,std::memory_order_relaxed)) {}
-}
-
 class Driver final : public IASIO {
 public:
     Driver():render_(fifo_, &Driver::request_audio, this, kFrames, true),bridge_(fifo_) {g_objects.fetch_add(1);}
@@ -181,25 +190,19 @@ public:
     ASIOError start() override {
         if(!initialized_||!prepared_||playing_)return ASE_InvalidMode;
         fifo_.clear_stopped();
-        callback_count_.store(0);
+        callback_count_=0;
         callback_timings_.reset_stopped();
+        host_pcm_tracker_.reset_stopped();
         callback_errors_.store(0);
-        over_budget_callbacks_.store(0);
-        max_callback_us_.store(0);
-        silent_host_blocks_.store(0);
-        first_nonzero_block_.store(UINT64_MAX);
-        last_nonzero_block_.store(UINT64_MAX);
-        nonzero_left_blocks_.store(0);
-        nonzero_right_blocks_.store(0);
-        invalid_float_blocks_.store(0);
-        max_left_peak_ppm_.store(0);
-        max_right_peak_ppm_.store(0);
         producer_wakes_.store(0);
         latency_queries_.store(0);
         last_reported_latency_.store(0);
         requested_period_ms_=configured_period_ms();
         queue_target_frames_=configured_queue_target_blocks()*
             static_cast<std::size_t>(kFrames);
+        callback_budget_us_=rate_
+            ? static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_ : 0ULL;
+        (void)qpc_frequency(); // force init before realtime callback thread
         callback_timeline_.reset();
         callback_stamp_.publish({0,asio_system_clock_ns()});
         buffer_index_=0;
@@ -213,6 +216,7 @@ public:
         // Cubase DSP runs on a dedicated producer worker, not the render worker.
         producer_stop_event_=CreateEventW(nullptr,TRUE,FALSE,nullptr);
         producer_wake_event_=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+        producer_stop_requested_.store(false,std::memory_order_relaxed);
         if(!producer_stop_event_||!producer_wake_event_){
             stop_producer();return ASE_NoMemory;
         }
@@ -348,11 +352,22 @@ private:
         // Only signals the worker; no host DSP on WASAPI render thread.
         auto* self=static_cast<Driver*>(raw);
         if(!self->producer_wake_event_)return false;
+        // The previous implementation unconditionally called SetEvent after
+        // every render period. When FIFO already holds the configured target,
+        // the producer would wake just to calculate zero blocks to fill.
+        // The NEXT render period still wakes it as soon as queue < target.
+        if(!modern_asio::producer_needs_wakeup(
+               self->fifo_.available_frames(),self->queue_target_frames_))
+            return true;
         const bool signaled=SetEvent(self->producer_wake_event_)!=FALSE;
         if(signaled) self->producer_wakes_.fetch_add(1,std::memory_order_relaxed);
         return signaled;
     }
     void stop_producer() noexcept {
+        // Avoid one Windows kernel handle poll per produced ASIO block.
+        // The atomic flag is checked between host callbacks; the stop event
+        // still interrupts WaitForMultipleObjects when the worker is asleep.
+        producer_stop_requested_.store(true,std::memory_order_release);
         if(producer_stop_event_)SetEvent(producer_stop_event_);
         if(producer_wake_event_)SetEvent(producer_wake_event_);
         if(producer_thread_.joinable())producer_thread_.join();
@@ -381,7 +396,7 @@ private:
                 static_cast<std::size_t>(kFrames),
                 queue_target_frames_,4);
             for(std::size_t i=0;i<planned;++i){
-                if(WaitForSingleObject(producer_stop_event_,0)==WAIT_OBJECT_0)
+                if(producer_stop_requested_.load(std::memory_order_acquire))
                     break;
                 if(!produce_one_block())break;
             }
@@ -401,7 +416,7 @@ private:
             active_[0]?planar_[0][index].data():nullptr,
             active_[1]?planar_[1][index].data():nullptr,
             static_cast<std::size_t>(kFrames));
-        const auto start_ns=qpc_ns();
+        const auto start_ticks=qpc_ticks();
         try {
             if(time_info_ && callbacks_->bufferSwitchTimeInfo){
                 ASIOTime time{};
@@ -418,59 +433,18 @@ private:
             callback_errors_.fetch_add(1,std::memory_order_relaxed);
             return false;
         }
-        const auto end_ns=qpc_ns();
-        const auto callback_us=end_ns>=start_ns ? (end_ns-start_ns)/1000 : 0;
-        const auto block_ordinal=callback_count_.fetch_add(1,std::memory_order_relaxed);
-        keep_max(max_callback_us_,callback_us);
-        const auto callback_budget_us=rate_
-            ? static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_ : 0ULL;
-        callback_timings_.observe(callback_us,callback_budget_us,block_ordinal);
-        if(callback_budget_us && callback_us>=callback_budget_us)
-            over_budget_callbacks_.fetch_add(1,std::memory_order_relaxed);
+        const auto end_ticks=qpc_ticks();
+        const auto callback_us=modern_asio::qpc_elapsed_us(
+            start_ticks,end_ticks,qpc_frequency());
+        const auto block_ordinal=callback_count_++;
+        callback_timings_.observe(callback_us,callback_budget_us_,block_ordinal);
 
-        // Compare actual ASIO output data with what the host claims to play.
-        // O(512) bounded float reads per callback; atomic counters updated once.
-        bool left_has_audio=false,right_has_audio=false,invalid_samples=false;
-        float left_peak=0.0f,right_peak=0.0f;
-        const float* left=active_[0]?planar_[0][index].data():nullptr;
-        const float* right=active_[1]?planar_[1][index].data():nullptr;
-        for(long f=0;f<kFrames;++f){
-            if(left){
-                const float v=left[f];
-                if(!std::isfinite(v))invalid_samples=true;
-                else {
-                    const float a=std::fabs(v);
-                    if(a>left_peak)left_peak=a;
-                    if(a>0.000001f)left_has_audio=true;
-                }
-            }
-            if(right){
-                const float v=right[f];
-                if(!std::isfinite(v))invalid_samples=true;
-                else {
-                    const float a=std::fabs(v);
-                    if(a>right_peak)right_peak=a;
-                    if(a>0.000001f)right_has_audio=true;
-                }
-            }
-        }
-        if(!left_has_audio && !right_has_audio)
-            silent_host_blocks_.fetch_add(1,std::memory_order_relaxed);
-        else {
-            std::uint64_t none=UINT64_MAX;
-            first_nonzero_block_.compare_exchange_strong(
-                none,block_ordinal,std::memory_order_relaxed);
-            last_nonzero_block_.store(block_ordinal,std::memory_order_relaxed);
-        }
-        if(left_has_audio)nonzero_left_blocks_.fetch_add(1,std::memory_order_relaxed);
-        if(right_has_audio)nonzero_right_blocks_.fetch_add(1,std::memory_order_relaxed);
-        if(invalid_samples)invalid_float_blocks_.fetch_add(1,std::memory_order_relaxed);
-        const auto peak_ppm=[](float peak)->std::uint64_t{
-            return static_cast<std::uint64_t>(
-                static_cast<double>(std::min(peak,1000.0f))*1000000.0);
-        };
-        keep_max(max_left_peak_ppm_,peak_ppm(left_peak));
-        keep_max(max_right_peak_ppm_,peak_ppm(right_peak));
+        // Producer-owned diagnostics: exactly the same per-block PCM evidence
+        // as before, without cross-thread atomic operations per sample block.
+        host_pcm_tracker_.observe(
+            active_[0]?planar_[0][index].data():nullptr,
+            active_[1]?planar_[1][index].data():nullptr,
+            static_cast<std::size_t>(kFrames),block_ordinal);
         // ASIO SDK contract: index is the half the host is NOW filling.
         // The OTHER half is the one hardware must play this period.
         // Never queue the just-written half directly.
@@ -504,6 +478,8 @@ private:
         const auto info=render_.device_info();
         const auto stats=render_.stats();
         const auto timing=callback_timings_.snapshot_stopped();
+        const auto pcm=host_pcm_tracker_.snapshot_stopped();
+        const auto stopped_wall_ns=qpc_ns();
         char line[2400]{};
         const int bytes=std::snprintf(
             line,sizeof(line),
@@ -530,9 +506,9 @@ private:
             "render_queue_first_low_event=%llu "
             "wasapi_stream_latency_100ns=%llu\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
-            static_cast<unsigned long long>(callback_count_.load()),
-            static_cast<unsigned long long>(max_callback_us_.load()),
-            static_cast<unsigned long long>(over_budget_callbacks_.load()),
+            static_cast<unsigned long long>(callback_count_),
+            static_cast<unsigned long long>(timing.max_us),
+            static_cast<unsigned long long>(timing.over_budget),
             static_cast<unsigned long long>(callback_errors_.load()),
             static_cast<unsigned long long>(producer_wakes_.load()),
             static_cast<unsigned long long>(stats.render_events),
@@ -545,18 +521,18 @@ private:
             static_cast<unsigned long long>(latency_queries_.load()),
             last_reported_latency_.load(),
             disable_time_info_ ? 1u : 0u,
-            static_cast<unsigned long long>(silent_host_blocks_.load()),
-            static_cast<unsigned long long>(nonzero_left_blocks_.load()),
-            static_cast<unsigned long long>(nonzero_right_blocks_.load()),
-            static_cast<unsigned long long>(invalid_float_blocks_.load()),
-            static_cast<unsigned long long>(max_left_peak_ppm_.load()),
-            static_cast<unsigned long long>(max_right_peak_ppm_.load()),
-            static_cast<unsigned long long>(first_nonzero_block_.load()),
-            static_cast<unsigned long long>(last_nonzero_block_.load()),
-            static_cast<unsigned long long>((qpc_ns()>=start_wall_ns_?
-                    qpc_ns()-start_wall_ns_:0)/1000000ULL),
+            static_cast<unsigned long long>(pcm.silent_host_blocks),
+            static_cast<unsigned long long>(pcm.nonzero_left_blocks),
+            static_cast<unsigned long long>(pcm.nonzero_right_blocks),
+            static_cast<unsigned long long>(pcm.invalid_float_blocks),
+            static_cast<unsigned long long>(pcm.max_left_peak_ppm),
+            static_cast<unsigned long long>(pcm.max_right_peak_ppm),
+            static_cast<unsigned long long>(pcm.first_nonzero_block),
+            static_cast<unsigned long long>(pcm.last_nonzero_block),
+            static_cast<unsigned long long>((stopped_wall_ns>=start_wall_ns_?
+                    stopped_wall_ns-start_wall_ns_:0)/1000000ULL),
             static_cast<unsigned long long>(
-                    (callback_count_.load()*static_cast<std::uint64_t>(kFrames)*1000ULL)/
+                    (callback_count_*static_cast<std::uint64_t>(kFrames)*1000ULL)/
                     (rate_?rate_:1)),
             static_cast<unsigned long long>(stats.submitted_frames),
             static_cast<unsigned long long>(fifo_.available_frames()),
@@ -591,29 +567,22 @@ private:
     std::atomic<ULONG> ref_{1};
     std::uint32_t requested_period_ms_{5};
     std::size_t queue_target_frames_{2*static_cast<std::size_t>(kFrames)};
-    std::atomic<std::uint64_t> callback_count_{0};
+    std::uint64_t callback_count_{0}; // producer owns; only read after join
+    std::uint64_t callback_budget_us_{0}; // cached before producer starts
     modern_asio::CallbackTimingTracker callback_timings_{};
-    std::atomic<std::uint64_t> max_callback_us_{0};
-    std::atomic<std::uint64_t> over_budget_callbacks_{0};
+    modern_asio::HostPcmTracker host_pcm_tracker_{};
     std::atomic<std::uint64_t> producer_wakes_{0};
     std::atomic<std::uint64_t> latency_queries_{0};
     std::atomic<long> last_reported_latency_{0};
     bool disable_time_info_{false};
     std::uint64_t start_wall_ns_{0};
-    std::atomic<std::uint64_t> silent_host_blocks_{0};
-    std::atomic<std::uint64_t> first_nonzero_block_{UINT64_MAX};
-    std::atomic<std::uint64_t> last_nonzero_block_{UINT64_MAX};
-    std::atomic<std::uint64_t> nonzero_left_blocks_{0};
-    std::atomic<std::uint64_t> nonzero_right_blocks_{0};
-    std::atomic<std::uint64_t> invalid_float_blocks_{0};
-    std::atomic<std::uint64_t> max_left_peak_ppm_{0};
-    std::atomic<std::uint64_t> max_right_peak_ppm_{0};
     modern_asio::SpscStereoRing fifo_{32768};
     modern_asio::WasapiSharedRenderer render_;
     modern_asio::AsioPlaybackBridge bridge_;
     // The host controls start/stop on one thread; producer is SPSC writer.
     HANDLE producer_stop_event_{nullptr};
     HANDLE producer_wake_event_{nullptr};
+    std::atomic<bool> producer_stop_requested_{false};
     std::thread producer_thread_;
     std::atomic<bool> playing_{false};
     long buffer_index_{0};

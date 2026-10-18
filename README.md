@@ -153,3 +153,7 @@ User's phase-2 log confirms 100% native Float32 direct WASAPI rendering and func
 ### Phase 3: high-load telemetry (2026-10-18)
 
 Added Cubase ASIO callback histogram, consecutive over-budget streak and sampled WASAPI FIFO pressure to stop diagnostics, without changing PCM, buffer sizes or ASIO double-buffer handling. New portable tests pass Clang ASan/UBSan and GCC Release, but full Windows tests (19) and Cubase runtime on new DLL remain pending. See docs/OPTIMIZATION_PHASE3_LOAD_TELEMETRY.md.
+
+### Comprehensive runtime hot-path optimization branch (2026-10-18)
+
+`optimization/full-pass-20261018` contains QPC frequency caching and raw callback tick timing, producer-owned PCM metrics (no per-callback atomic RMW for statistics), conditional producer event notifications and atomic stop polls, all preserving ASIO opposite-half mapping, PCM output, default 512 ASIO / 1024 FIFO, and WASAPI native Float32. Added Release-safe regressions (expected Windows 23 CTests) and isolated no-registration x64 benchmark script. Local Clang ASan/UBSan and GCC Release logic checks PASS, **Windows/Cubase yet to be verified**. Never infer total CPU/latency improvement from modeled event wake reduction. See docs/OPTIMIZATION_FULL_PASS_20261018.md.
