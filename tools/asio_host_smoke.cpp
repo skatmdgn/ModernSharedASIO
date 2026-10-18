@@ -219,7 +219,7 @@ int wmain(int argc, wchar_t** argv) {
             break;
         }
         buffers_created=true;
-        std::printf("Registry-free ASIO host: rate=%.0f, block=%ld, channels=%ld, mode=%s\n",
+        std::printf("Registry-free ASIO host: rate=%.0f, block=%ld, channels=%ld, requested_mode=%s\n",
                     sample_rate,preferred,outputs,
                     host.supports_time_info ? "bufferSwitchTimeInfo":"bufferSwitch");
         std::puts(host.play_tone ? "Quiet 440Hz ASIO tone for 5 seconds" :

@@ -150,6 +150,8 @@ public:
         over_budget_callbacks_.store(0);
         max_callback_us_.store(0);
         silent_host_blocks_.store(0);
+        first_nonzero_block_.store(UINT64_MAX);
+        last_nonzero_block_.store(UINT64_MAX);
         nonzero_left_blocks_.store(0);
         nonzero_right_blocks_.store(0);
         invalid_float_blocks_.store(0);
@@ -177,6 +179,7 @@ public:
         catch(...){stop_producer();return ASE_NoMemory;}
         // Protect buffer state before the audio engine can start rendering.
         playing_.store(true,std::memory_order_release);
+        start_wall_ns_=qpc_ns();
         auto hr=render_.start(requested_period_ms_);
         if(FAILED(hr)){
             render_.stop();
@@ -364,7 +367,7 @@ private:
         }
         const auto end_ns=qpc_ns();
         const auto callback_us=end_ns>=start_ns ? (end_ns-start_ns)/1000 : 0;
-        callback_count_.fetch_add(1,std::memory_order_relaxed);
+        const auto block_ordinal=callback_count_.fetch_add(1,std::memory_order_relaxed);
         keep_max(max_callback_us_,callback_us);
         if(rate_ && callback_us >=
             (static_cast<std::uint64_t>(kFrames)*1000000ULL/rate_))
@@ -398,6 +401,12 @@ private:
         }
         if(!left_has_audio && !right_has_audio)
             silent_host_blocks_.fetch_add(1,std::memory_order_relaxed);
+        else {
+            std::uint64_t none=UINT64_MAX;
+            first_nonzero_block_.compare_exchange_strong(
+                none,block_ordinal,std::memory_order_relaxed);
+            last_nonzero_block_.store(block_ordinal,std::memory_order_relaxed);
+        }
         if(left_has_audio)nonzero_left_blocks_.fetch_add(1,std::memory_order_relaxed);
         if(right_has_audio)nonzero_right_blocks_.fetch_add(1,std::memory_order_relaxed);
         if(invalid_samples)invalid_float_blocks_.fetch_add(1,std::memory_order_relaxed);
@@ -441,7 +450,10 @@ private:
             "asio_time_info=%u latency_queries=%llu last_reported_latency_frames=%ld "
             "disable_time_info=%u host_silent_blocks=%llu host_nonzero_left=%llu "
             "host_nonzero_right=%llu host_invalid_float_blocks=%llu "
-            "host_peak_left_ppm=%llu host_peak_right_ppm=%llu\n",
+            "host_peak_left_ppm=%llu host_peak_right_ppm=%llu "
+            "first_nonzero_block=%llu last_nonzero_block=%llu "
+            "asiodriver_wall_ms=%llu asio_callback_audio_ms=%llu "
+            "wasapi_submitted_frames=%llu remaining_fifo_frames=%llu\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_.load()),
             static_cast<unsigned long long>(max_callback_us_.load()),
@@ -463,7 +475,16 @@ private:
             static_cast<unsigned long long>(nonzero_right_blocks_.load()),
             static_cast<unsigned long long>(invalid_float_blocks_.load()),
             static_cast<unsigned long long>(max_left_peak_ppm_.load()),
-            static_cast<unsigned long long>(max_right_peak_ppm_.load()));
+            static_cast<unsigned long long>(max_right_peak_ppm_.load()),
+            static_cast<unsigned long long>(first_nonzero_block_.load()),
+            static_cast<unsigned long long>(last_nonzero_block_.load()),
+            static_cast<unsigned long long>((qpc_ns()>=start_wall_ns_?
+                    qpc_ns()-start_wall_ns_:0)/1000000ULL),
+            static_cast<unsigned long long>(
+                    (callback_count_.load()*static_cast<std::uint64_t>(kFrames)*1000ULL)/
+                    (rate_?rate_:1)),
+            static_cast<unsigned long long>(stats.submitted_frames),
+            static_cast<unsigned long long>(fifo_.available_frames()));
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -479,7 +500,10 @@ private:
     std::atomic<std::uint64_t> latency_queries_{0};
     std::atomic<long> last_reported_latency_{0};
     bool disable_time_info_{false};
+    std::uint64_t start_wall_ns_{0};
     std::atomic<std::uint64_t> silent_host_blocks_{0};
+    std::atomic<std::uint64_t> first_nonzero_block_{UINT64_MAX};
+    std::atomic<std::uint64_t> last_nonzero_block_{UINT64_MAX};
     std::atomic<std::uint64_t> nonzero_left_blocks_{0};
     std::atomic<std::uint64_t> nonzero_right_blocks_{0};
     std::atomic<std::uint64_t> invalid_float_blocks_{0};

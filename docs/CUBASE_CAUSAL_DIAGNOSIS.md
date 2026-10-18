@@ -54,3 +54,7 @@ Remove-ItemProperty -Path 'HKCU:\Software\ModernSharedASIO' -Name DisableTimeInf
 If both experiments fail, instrument host callback timeline and audio-content arrival at block granularity, plus pair each ASIO reported sample position/time with IAudioClock/QPC physical device observations; add a deterministic multitrack seek-stress mock-host test. Track one audible marker at a known bar in the project, and distinguish: Cubase output buffer contains future audio vs output buffer correctly matches timeline but later PCM is reordered. Only then implement a targeted fix; no uncontrolled latency/period tweaks.
 
 **Current overall status:** Cubase multitrack compatibility FAILED and unsolved. The original Steinberg DLL remains unaffected. Last GitHub source revision fixed ASIOOutputReady reporting but produced no observable improvement. Do not claim resolved.
+
+## Explicit user clarification: future source content not output delay
+
+At transport bar 0 user hears music situated roughly bar 16 while bar 0 has no audio at all. This cannot be described as ordinary latency; earlier ASIOOutputReady correction changed no symptom. A 16-bar silence + marker FIFO content test, actual callback path counters and wall-vs-source audio pacing diagnostics have been added. Pending Windows and real Cubase verification. See docs/CUBASE_FUTURE_BAR_FIX.md.
