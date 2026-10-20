@@ -508,7 +508,6 @@ private:
                 }
                 render_.stop();
                 ++output_device_switch_failures_;
-                put_text(error_,"WASAPI output recovery failed",sizeof(error_));
                 return RouteChangeOutcome::no_output;
             }
             return RouteChangeOutcome::unchanged;
@@ -535,7 +534,6 @@ private:
             return RouteChangeOutcome::applied;
         }
         ++output_device_switch_failures_;
-        put_text(error_,"WASAPI output switch failed",sizeof(error_));
         return result==modern_asio::OutputSwitchResult::restored_previous
             ? RouteChangeOutcome::restored
             : RouteChangeOutcome::no_output;
