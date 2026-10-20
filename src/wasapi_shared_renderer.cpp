@@ -133,6 +133,7 @@ bool WasapiSharedRenderer::set_output_endpoint_id(
 HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     if (target_period_ms > 20) return E_INVALIDARG;
     if (thread_.joinable()) return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+    stream_active_.store(false,std::memory_order_release);
     stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!stop_event_) return HRESULT_FROM_WIN32(GetLastError());
     {
@@ -397,6 +398,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     hr = client->Start();
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ClientStopOwner stop_client{client.Get()};
+    stream_active_.store(true,std::memory_order_release);
     publish_initialized(S_OK, info);
 
     // Disabled by default: do not issue per-event QPC queries in the
@@ -445,6 +447,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
             break;
         }
     }
+    stream_active_.store(false,std::memory_order_release);
     // Stop and all COM/handle teardown finish before thread exit.
 }
 } // namespace modern_asio

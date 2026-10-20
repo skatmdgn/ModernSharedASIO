@@ -84,6 +84,11 @@ public:
     void stop() noexcept;
     // Only the render worker calls the source; never call stop() from this thread.
     bool on_render_thread() const noexcept;
+    // A worker may have exited on AUDCLNT_E_DEVICE_INVALIDATED while its
+    // std::thread remains joinable. Treat that separately from host playing_.
+    bool stream_active() const noexcept {
+        return stream_active_.load(std::memory_order_acquire);
+    }
     OutputInfo device_info() const noexcept;
     OutputStats stats() const noexcept;
     bool read_clock_observation(ClockObservation& out) const noexcept;
@@ -119,6 +124,7 @@ private:
     SchedulerGapTracker event_gap_tracker_{};
     std::atomic<bool> scheduler_probe_enabled_{false};
     std::atomic<HRESULT> last_stream_hresult_{S_OK};
+    std::atomic<bool> stream_active_{false};
     ClockObservationChannel coherent_clock_{};
 };
 } // namespace modern_asio

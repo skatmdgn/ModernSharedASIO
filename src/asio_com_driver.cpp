@@ -486,6 +486,23 @@ private:
         }
         if(decision==modern_asio::OutputSwitchDecision::same_device) {
             output_device_fallback_=fallback;
+            // An invalidated WASAPI worker can exit but remain joinable.
+            // When Windows announces reconnection, recover the dead consumer
+            // even if the preferred endpoint ID itself has not changed.
+            if(playing_.load(std::memory_order_acquire) && !render_.stream_active()) {
+                render_.stop();
+                if(render_.set_output_endpoint_id(selected_id)) {
+                    const auto hr=render_.start(requested_period_ms_);
+                    if(SUCCEEDED(hr) && render_.device_info().sample_rate==rate_) {
+                        ++output_device_switches_;
+                        return RouteChangeOutcome::applied;
+                    }
+                }
+                render_.stop();
+                ++output_device_switch_failures_;
+                put_text(error_,"WASAPI output recovery failed",sizeof(error_));
+                return RouteChangeOutcome::no_output;
+            }
             return RouteChangeOutcome::unchanged;
         }
         if(!playing_.load(std::memory_order_acquire)) {
