@@ -177,3 +177,7 @@ Phase3 diagnosis adds opt-in EnableSchedulerProbe=1; collects producer wake gaps
 ## Output selection UI feature (2026-10-18; unmerged)
 
 Branch feature/output-device-picker exposes IASIO controlPanel device chooser for current Windows eRender endpoints; previously init and renderer were hardcoded to eConsole default. Reads/writes HKCU OutputDeviceId; when pinned headset is unplugged, do not redirect without asking user; companion `modern_asio_output_devices.exe` can reset selection. Uses `user32`, `propsys` and `advapi32` link libraries; expected CTest 27 including policy test. Portable policy Clang ASan/UBSan and GCC Release PASS, Win32 MSVC full DLL & dialog NOT TESTED, Cubase headphone routing NOT TESTED. docs/OUTPUT_DEVICE_SELECTION.md.
+
+## 2026-10-20 disconnected headphone recovery
+
+Pinned output unplugged on PC reboot caused Cubase ASIO driver load error. Now preferred missing/inactive falls back to Windows default in IASIO init without altering HKCU saved preference; effective endpoint ID is passed to WASAPI worker so both threads use same device. Add output_device_fallback=1 to ASIO_STOP and log summary. Portable Clang ASan+UBSan / GCC Release policy test PASS; complete Windows CTest 27 and Cubase actual reboot NOT VERIFIED. docs/OUTPUT_DEVICE_SELECTION.md.

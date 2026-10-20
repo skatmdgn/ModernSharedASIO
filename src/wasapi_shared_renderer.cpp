@@ -122,6 +122,14 @@ void convert(float const* input, BYTE* dst, UINT32 frames, const FormatDesc& f) 
 }
 } // namespace
 
+bool WasapiSharedRenderer::set_output_endpoint_id(
+    const std::wstring& endpoint_id) noexcept {
+    if(thread_.joinable())return false;
+    try {
+        locked_output_endpoint_id_=endpoint_id;
+        return true;
+    } catch(...) {return false;}
+}
 HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     if (target_period_ms > 20) return E_INVALIDARG;
     if (thread_.joinable()) return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
@@ -212,7 +220,13 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
                                   IID_PPV_ARGS(devices.GetAddressOf()));
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ComPtr<IMMDevice> endpoint;
-    hr = resolve_output_endpoint(devices.Get(), endpoint.GetAddressOf());
+    // IASIO::init already pinned the effective device ID. Never select a
+    // different Windows default between host initialization and playback.
+    // Standalone smoke can still use automatic preferred/default resolution.
+    hr = locked_output_endpoint_id_.empty()
+        ? resolve_output_endpoint(devices.Get(), endpoint.GetAddressOf())
+        : resolve_exact_output_endpoint(devices.Get(), locked_output_endpoint_id_,
+                                        endpoint.GetAddressOf());
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ComPtr<IAudioClient> client;
     hr = endpoint->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER,

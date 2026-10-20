@@ -137,7 +137,7 @@ void refill_combo(HWND dialog,DialogState& state) {
     SendMessageW(state.combo,CB_SETCURSEL,static_cast<WPARAM>(current),0);
     SetDlgItemTextW(dialog,2103,found
       ? L"Choose a device and click Save. Close and reopen Cubase to apply."
-      : L"Saved output is disconnected. Select an available output, then restart Cubase.");
+      : L"Saved output is offline. Windows default is used now; the saved preference returns on the next driver initialization.");
 }
 INT_PTR CALLBACK picker_proc(HWND dialog,UINT message,WPARAM wp,LPARAM lp) {
     auto* state=reinterpret_cast<DialogState*>(GetWindowLongPtrW(dialog,DWLP_USER));
@@ -203,30 +203,70 @@ INT_PTR CALLBACK picker_proc(HWND dialog,UINT message,WPARAM wp,LPARAM lp) {
 }
 } // namespace
 
-HRESULT resolve_output_endpoint(IMMDeviceEnumerator* enumerator,
-                                IMMDevice** endpoint) noexcept {
+HRESULT resolve_exact_output_endpoint(IMMDeviceEnumerator* enumerator,
+                                      const std::wstring& endpoint_id,
+                                      IMMDevice** endpoint) noexcept {
     if(!enumerator||!endpoint)return E_POINTER;
     *endpoint=nullptr;
+    if(endpoint_id.empty())return E_INVALIDARG;
+    ComPtr<IMMDevice> device;
+    auto hr=enumerator->GetDevice(endpoint_id.c_str(),device.GetAddressOf());
+    if(FAILED(hr))return hr;
+    DWORD state=0;
+    hr=device->GetState(&state);
+    if(FAILED(hr))return hr;
+    if((state&DEVICE_STATE_ACTIVE)==0)
+        return HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED);
+    return device.CopyTo(endpoint);
+}
+HRESULT resolve_output_endpoint(IMMDeviceEnumerator* enumerator,
+                                IMMDevice** endpoint,
+                                std::wstring* actual_endpoint_id,
+                                bool* used_fallback) noexcept {
+    if(!enumerator||!endpoint)return E_POINTER;
+    *endpoint=nullptr;
+    if(actual_endpoint_id)actual_endpoint_id->clear();
+    if(used_fallback)*used_fallback=false;
     try {
-        std::wstring selected;
-        const auto hr=read_device_choice(selected);
-        if(FAILED(hr))return hr;
-        return dispatch_output_endpoint(selected,
+        std::wstring preferred;
+        const auto read_hr=read_device_choice(preferred);
+        if(FAILED(read_hr))return read_hr;
+        bool fallback=false;
+        const auto result=dispatch_output_endpoint(preferred,
             [&]() noexcept -> HRESULT {
                 return enumerator->GetDefaultAudioEndpoint(eRender,eConsole,endpoint);
             },
-            [&](const std::wstring& id) noexcept -> HRESULT {
-                // Never silently route explicit headset output to speakers.
+            [&](const std::wstring& id) noexcept -> PreferredEndpointAttempt<HRESULT> {
                 ComPtr<IMMDevice> device;
-                auto result=enumerator->GetDevice(id.c_str(),device.GetAddressOf());
-                if(FAILED(result))return result;
+                auto hr=enumerator->GetDevice(id.c_str(),device.GetAddressOf());
+                if(FAILED(hr)) {
+                    fallback=true;
+                    return {hr,true};
+                }
                 DWORD state=0;
-                result=device->GetState(&state);
-                if(FAILED(result))return result;
-                if((state&DEVICE_STATE_ACTIVE)==0)
-                    return HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED);
-                return device.CopyTo(endpoint);
+                hr=device->GetState(&state);
+                if(FAILED(hr) || (state&DEVICE_STATE_ACTIVE)==0) {
+                    fallback=true;
+                    return {FAILED(hr)?hr:HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED),true};
+                }
+                // CopyTo errors are real COM failures, not absence.
+                return {device.CopyTo(endpoint),false};
             });
+        if(FAILED(result))return result;
+        if(used_fallback)*used_fallback=fallback;
+        if(actual_endpoint_id) {
+            LPWSTR allocated_id=nullptr;
+            const auto hr=(*endpoint)->GetId(&allocated_id);
+            if(FAILED(hr))return hr;
+            if(!allocated_id)return E_UNEXPECTED;
+            try { actual_endpoint_id->assign(allocated_id); }
+            catch(...) {
+                CoTaskMemFree(allocated_id);
+                throw;
+            }
+            CoTaskMemFree(allocated_id);
+        }
+        return result;
     } catch(...) {return E_OUTOFMEMORY;}
 }
 bool show_output_device_picker(HWND host_parent) noexcept {

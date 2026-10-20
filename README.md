@@ -171,3 +171,7 @@ The full-pass experimental branch supports opt-in DWORD `EnableSchedulerProbe=1`
 ### Select a headset or speaker output (isolated feature branch)
 
 On `feature/output-device-picker`, Cubase IASIO Control Panel can enumerate active Windows render endpoints (headset, speakers, HDMI/USB) and pin the chosen device via HKCU OutputDeviceId. Default behavior is still Windows default output; unplugged pinned devices yield an error rather than silently switching speakers. Standalone `build-win\Debug\modern_asio_output_devices.exe` allows recovery outside Cubase. Reopen Cubase after changing choice. CMake expected CTests 27; Windows/MSVC and actual Cubase device routing **not yet verified**. See docs/OUTPUT_DEVICE_SELECTION.md.
+
+### Disconnected headset recovery on startup (2026-10-20)
+
+The feature/output-device-picker branch now automatically uses Windows default output when the saved preferred headset is absent at ASIO initialization, retaining its saved ID for next Cubase restart after reconnection. IASIO rate discovery and WASAPI playback pin the same effective IMMDevice ID. New ASIO_STOP output_device_fallback field, portable Clang sanitizer and GCC Release policy tests PASS, full MSVC/Cubase still pending. No live hot swap. docs/OUTPUT_DEVICE_SELECTION.md.

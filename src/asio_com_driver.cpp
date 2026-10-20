@@ -36,6 +36,8 @@
 #include <new>
 #include <thread>
 #include <vector>
+#include <string>
+#include <utility>
 #include "modern_asio/asio_playback_bridge.hpp"
 #include "modern_asio/wasapi_shared_renderer.hpp"
 #include "modern_asio/output_device_selector.hpp"
@@ -190,14 +192,21 @@ public:
         ComPtr<IMMDevice> dev;
         ComPtr<IAudioClient> client;
         WAVEFORMATEX* fmt=nullptr;
+        std::wstring resolved_output_id;
+        bool used_fallback=false;
         HRESULT hr=CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_INPROC_SERVER,
                                      IID_PPV_ARGS(e.GetAddressOf()));
-        if(SUCCEEDED(hr))hr=modern_asio::resolve_output_endpoint(e.Get(),dev.GetAddressOf());
+        if(SUCCEEDED(hr))
+            hr=modern_asio::resolve_output_endpoint(e.Get(),dev.GetAddressOf(),
+                                                     &resolved_output_id,&used_fallback);
         if(SUCCEEDED(hr))hr=dev->Activate(__uuidof(IAudioClient),CLSCTX_INPROC_SERVER,nullptr,
                                           reinterpret_cast<void**>(client.GetAddressOf()));
         if(SUCCEEDED(hr))hr=client->GetMixFormat(&fmt);
         if(SUCCEEDED(hr) && fmt && fmt->nChannels>=2 && fmt->nSamplesPerSec>0){
-            rate_=fmt->nSamplesPerSec;initialized_=true;
+            rate_=fmt->nSamplesPerSec;
+            effective_output_device_id_=std::move(resolved_output_id);
+            output_device_fallback_=used_fallback;
+            initialized_=true;
         }
         CoTaskMemFree(fmt);
         if(!initialized_)put_text(error_,"Output device unavailable; connect headset or reset ASIO output selection",sizeof(error_));
@@ -208,6 +217,12 @@ public:
     void getErrorMessage(char* s) override {put_text(s,error_,124);}
     ASIOError start() override {
         if(!initialized_||!prepared_||playing_)return ASE_InvalidMode;
+        // Lock the endpoint negotiated at init for this host session. A saved
+        // disconnected headset resolves to the active Windows default there.
+        if(!render_.set_output_endpoint_id(effective_output_device_id_)) {
+            put_text(error_,"Could not store the selected audio endpoint",sizeof(error_));
+            return ASE_NoMemory;
+        }
         fifo_.clear_stopped();
         callback_count_=0;
         callback_timings_.reset_stopped();
@@ -555,7 +570,7 @@ private:
             "producer_wake_gap_mean_us=%llu producer_wake_gap_max_us=%llu "
             "producer_wake_gap_over_budget=%llu "
             "render_event_gap_samples=%llu render_event_gap_max_us=%llu "
-            "render_event_gap_over_1p5x=%llu\n",
+            "render_event_gap_over_1p5x=%llu output_device_fallback=%u\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_),
             static_cast<unsigned long long>(timing.max_us),
@@ -617,7 +632,8 @@ private:
             static_cast<unsigned long long>(wakes.over_threshold),
             static_cast<unsigned long long>(stats.render_event_gap_samples),
             static_cast<unsigned long long>(stats.render_event_gap_max_us),
-            static_cast<unsigned long long>(stats.render_event_gap_over_1p5x));
+            static_cast<unsigned long long>(stats.render_event_gap_over_1p5x),
+            output_device_fallback_?1u:0u);
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -626,6 +642,8 @@ private:
     }
     std::atomic<ULONG> ref_{1};
     HWND host_window_{nullptr};
+    std::wstring effective_output_device_id_{};
+    bool output_device_fallback_{false};
     std::uint32_t requested_period_ms_{5};
     bool scheduler_probe_enabled_{false};
     std::atomic<std::uint64_t> last_request_ticks_{0};

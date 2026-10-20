@@ -4,25 +4,38 @@
 #include <string>
 #define CHECK(x) do{if(!(x)){std::fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x);std::abort();}}while(false)
 int main() {
-    int defaults=0,explicit_calls=0;
-    const auto d=modern_asio::dispatch_output_endpoint(std::wstring{},
-        [&]{++defaults;return 100;},
-        [&](const std::wstring&){++explicit_calls;return 200;});
-    CHECK(d==100 && defaults==1 && explicit_calls==0);
-    const auto p=modern_asio::dispatch_output_endpoint(
-        std::wstring{L"{HEADSET-ID}"},
-        [&]{++defaults;return 100;},
+    using modern_asio::PreferredEndpointAttempt;
+    int defaults=0,pinned=0;
+    auto pick_default=[&]{++defaults;return 100;};
+    const auto no_preference=modern_asio::dispatch_output_endpoint(
+        std::wstring{},pick_default,
+        [&](const std::wstring&){++pinned;return PreferredEndpointAttempt<int>{200,false};});
+    CHECK(no_preference==100 && defaults==1 && pinned==0);
+    const auto connected=modern_asio::dispatch_output_endpoint(
+        std::wstring{L"{HEADSET-ID}"},pick_default,
         [&](const std::wstring& id){
-            ++explicit_calls;
-            CHECK(id==L"{HEADSET-ID}");
-            return -7;
+            CHECK(id==L"{HEADSET-ID}");++pinned;
+            return PreferredEndpointAttempt<int>{200,false};
         });
-    CHECK(p==-7 && defaults==1 && explicit_calls==1);
-    // Explicit headset missing => fail, do NOT unexpectedly switch speakers.
+    CHECK(connected==200 && defaults==1 && pinned==1);
+    // Headset unplugged: one attempt then Windows default, not ASIO init failure.
+    const auto unplugged=modern_asio::dispatch_output_endpoint(
+        std::wstring{L"{HEADSET-ID}"},pick_default,
+        [&](const std::wstring&){++pinned;return PreferredEndpointAttempt<int>{-7,true};});
+    CHECK(unplugged==100 && defaults==2 && pinned==2);
+    // A subsequent restart/replug must still prefer the original saved ID.
+    const auto replugged=modern_asio::dispatch_output_endpoint(
+        std::wstring{L"{HEADSET-ID}"},pick_default,
+        [&](const std::wstring&){++pinned;return PreferredEndpointAttempt<int>{201,false};});
+    CHECK(replugged==201 && defaults==2 && pinned==3);
+    // A non-availability error (e.g. releasing an interface) is not hidden.
     const auto error=modern_asio::dispatch_output_endpoint(
-        std::wstring{L"unplugged-headset"},
-        [&]{++defaults;return 0;},
-        [&](const std::wstring&){++explicit_calls;return -123;});
-    CHECK(error==-123 && defaults==1 && explicit_calls==2);
-    std::puts("output endpoint default/pinned no-fallback policy PASS");
+        std::wstring{L"{HEADSET-ID}"},pick_default,
+        [&](const std::wstring&){++pinned;return PreferredEndpointAttempt<int>{-9,false};});
+    CHECK(error==-9 && defaults==2 && pinned==4);
+    const auto no_default=modern_asio::dispatch_output_endpoint(
+        std::wstring{L"offline"},[&]{++defaults;return -123;},
+        [&](const std::wstring&){++pinned;return PreferredEndpointAttempt<int>{-4,true};});
+    CHECK(no_default==-123 && defaults==3 && pinned==5);
+    std::puts("output preference/automatic fallback/reconnect/error policy PASS");
 }

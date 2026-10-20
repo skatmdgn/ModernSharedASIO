@@ -170,3 +170,7 @@ Keep 512 ASIO + 1024 FIFO and main stable. Added `EnableSchedulerProbe` registry
 ### 2026-10-18 headset / output endpoint selector
 
 User reported inability to select newly connected headsets. Source only used GetDefaultAudioEndpoint in both init and rendering, and IASIO::controlPanel was ASE_NotPresent. New **isolated** feature/output-device-picker branch adds proper Win32 device selection dialog in Cubase, refresh button, saved HKCU OutputDeviceId, identical resolution in init and WASAPI, and a standalone GUI recovery launcher. Pinned-but-unavailable endpoint fails rather than silently redirect. No live hot-swap or main merge. Portable policy differential tests PASS under Clang ASan/UBSan and GCC Release; Windows count expected 27, full MSVC/Cubase NOT RUN. docs/OUTPUT_DEVICE_SELECTION.md.
+
+### 2026-10-20 headset reboot failover fix (feature branch)
+
+Disconnected saved headset made Cubase fail ASIO init; now fallback to Windows eConsole default when pinned device missing/inactive. Persist headset preference across fallback and restore on next Cubase initialization after replug. Pin effective output device ID for renderer and report output_device_fallback. Portable tests pass, Win32/27 CTests and Cubase reboot tests pending. No runtime hot-switch promised. docs/OUTPUT_DEVICE_SELECTION.md.

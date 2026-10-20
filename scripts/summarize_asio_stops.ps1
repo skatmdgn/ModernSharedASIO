@@ -40,6 +40,7 @@ foreach($line in $lines) {
         RenderGapMax_us = (Get-Number $fields 'render_event_gap_max_us')
         EarlyWake = $wake
         SchedulerProbe = $probe
+        OutputFallback = if($fields.ContainsKey('output_device_fallback')) { $fields['output_device_fallback'] } else { '-' }
         DirectPct = if($total -gt 0) { [math]::Round(100.0*[double](Get-Number $fields 'native_direct_frames')/[double]$total,2) } else { 0 }
     }
 }

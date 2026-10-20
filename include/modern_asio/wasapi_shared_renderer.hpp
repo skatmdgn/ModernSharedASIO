@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <mutex>
 #include <thread>
+#include <string>
 #include "modern_asio/spsc_stereo_ring.hpp"
 #include "modern_asio/engine_demand.hpp"
 #include "modern_asio/clock_observation.hpp"
@@ -76,6 +77,9 @@ public:
     void set_scheduler_probe_enabled(bool enabled) noexcept {
         scheduler_probe_enabled_.store(enabled,std::memory_order_relaxed);
     }
+    // Only call before start(), on the owning control thread. Resolves the
+    // actual device at IASIO::init, so Cubase and WASAPI use the same endpoint.
+    bool set_output_endpoint_id(const std::wstring& endpoint_id) noexcept;
     HRESULT start(std::uint32_t target_period_ms = 0);
     void stop() noexcept;
     // Only the render worker calls the source; never call stop() from this thread.
@@ -92,6 +96,7 @@ private:
     void* source_context_{nullptr};
     std::uint32_t source_block_frames_{0};
     bool asynchronous_source_{false};
+    std::wstring locked_output_endpoint_id_{};
     HANDLE stop_event_{nullptr};
     std::thread thread_;
     mutable std::mutex mutex_;
