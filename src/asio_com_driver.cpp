@@ -241,6 +241,8 @@ public:
         callback_errors_.store(0);
         output_device_switches_=0;
         output_device_switch_failures_=0;
+        output_route_checks_=0;
+        output_auto_switches_=0;
         producer_wakes_.store(0);
         latency_queries_.store(0);
         last_reported_latency_.store(0);
@@ -458,7 +460,13 @@ private:
         // can act on a signal, serialized with IASIO start/stop/controlPanel.
         // Keep COM endpoint enumeration and WASAPI joins off realtime threads.
         std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
-        if(initialized_) (void)apply_selected_output_route_locked();
+        if(initialized_) {
+            ++output_route_checks_;
+            const bool was_playing=playing_.load(std::memory_order_acquire);
+            const auto outcome=apply_selected_output_route_locked();
+            if(was_playing && outcome==RouteChangeOutcome::applied)
+                ++output_auto_switches_;
+        }
     }
 
     // Requires lifecycle_mutex_. Rate cannot change inside an existing ASIO
@@ -706,7 +714,8 @@ private:
             "producer_wake_gap_over_budget=%llu "
             "render_event_gap_samples=%llu render_event_gap_max_us=%llu "
             "render_event_gap_over_1p5x=%llu output_device_fallback=%u "
-            "output_device_switches=%llu output_device_switch_failures=%llu\n",
+            "output_device_switches=%llu output_device_switch_failures=%llu "
+            "output_route_checks=%llu output_auto_switches=%llu\n",
             rate_,kFrames,requested_period_ms_,info.period_frames,info.buffer_frames,
             static_cast<unsigned long long>(callback_count_),
             static_cast<unsigned long long>(timing.max_us),
@@ -771,7 +780,9 @@ private:
             static_cast<unsigned long long>(stats.render_event_gap_over_1p5x),
             output_device_fallback_?1u:0u,
             static_cast<unsigned long long>(output_device_switches_),
-            static_cast<unsigned long long>(output_device_switch_failures_));
+            static_cast<unsigned long long>(output_device_switch_failures_),
+            static_cast<unsigned long long>(output_route_checks_),
+            static_cast<unsigned long long>(output_auto_switches_));
         if(bytes>0 && static_cast<std::size_t>(bytes)<sizeof(line)) {
             DWORD written=0;
             WriteFile(file,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -785,6 +796,7 @@ private:
     std::mutex lifecycle_mutex_;
     modern_asio::OutputDeviceChangeMonitor output_monitor_{};
     std::uint64_t output_device_switches_{0},output_device_switch_failures_{0};
+    std::uint64_t output_route_checks_{0},output_auto_switches_{0};
     std::uint32_t requested_period_ms_{5};
     bool scheduler_probe_enabled_{false};
     std::atomic<std::uint64_t> last_request_ticks_{0};
