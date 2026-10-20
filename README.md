@@ -153,3 +153,11 @@ User's phase-2 log confirms 100% native Float32 direct WASAPI rendering and func
 ### Phase 3: high-load telemetry (2026-10-18)
 
 Added Cubase ASIO callback histogram, consecutive over-budget streak and sampled WASAPI FIFO pressure to stop diagnostics, without changing PCM, buffer sizes or ASIO double-buffer handling. New portable tests pass Clang ASan/UBSan and GCC Release, but full Windows tests (19) and Cubase runtime on new DLL remain pending. See docs/OPTIMIZATION_PHASE3_LOAD_TELEMETRY.md.
+
+## Output device selection and live failover (experimental)
+
+The ASIO control panel now exposes **Follow Windows default output** plus all Windows render endpoints, with disconnected endpoints marked. It stores the chosen Windows endpoint ID as a per-user REG_SZ at `HKCU\\Software\\ModernSharedASIO\\OutputDeviceId`. Leave the value empty to follow Windows' console default. The WASAPI renderer now opens that selected endpoint rather than always opening the default speakers. While ASIO playback is running, a 300ms control-thread monitor detects selection/default-device changes and endpoint loss/reconnection, joins the old WASAPI worker, and creates a new shared-mode stream without calling Cubase's DSP on the render worker or restarting ASIO buffers. A disconnected selected endpoint falls back to the Windows default, and reconnecting it selects it again.
+
+**Important:** The current ASIO bridge does not resample. On live switching, it only chooses endpoints whose Windows mix rate matches the ASIO session's rate. If a headset has a different mix sample rate, the renderer stays on a compatible default device until rates match (or the DAW ASIO driver is reloaded). Align both devices' Windows Advanced sound format sample rates before testing. Short gaps during switching are expected; uninterrupted/cross-faded playback is not claimed. No real Cubase/Windows runtime validation has been performed for this change; test with a backup DAW project before relying on it.
+
+Manual checks: start ASIO audio on speakers; open Cubase's driver control panel and select headset; verify actual audible output moves; disconnect headset while playing and verify fallback; reconnect and verify automatic return; select Follow Windows default and change default device in Windows; finally repeat after DAW restart and when initially selected headset is absent.

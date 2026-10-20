@@ -34,6 +34,8 @@
 #include <vector>
 #include "modern_asio/asio_playback_bridge.hpp"
 #include "modern_asio/wasapi_shared_renderer.hpp"
+#include "modern_asio/output_endpoint.hpp"
+#include <string>
 
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -164,7 +166,9 @@ public:
         WAVEFORMATEX* fmt=nullptr;
         HRESULT hr=CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_INPROC_SERVER,
                                      IID_PPV_ARGS(e.GetAddressOf()));
-        if(SUCCEEDED(hr))hr=e->GetDefaultAudioEndpoint(eRender,eConsole,dev.GetAddressOf());
+        std::wstring initial_output_id;
+        if(SUCCEEDED(hr))hr=modern_asio::resolve_output_endpoint(
+            e.Get(),dev.GetAddressOf(),initial_output_id);
         if(SUCCEEDED(hr))hr=dev->Activate(__uuidof(IAudioClient),CLSCTX_INPROC_SERVER,nullptr,
                                           reinterpret_cast<void**>(client.GetAddressOf()));
         if(SUCCEEDED(hr))hr=client->GetMixFormat(&fmt);
@@ -221,7 +225,7 @@ public:
         // Protect buffer state before the audio engine can start rendering.
         playing_.store(true,std::memory_order_release);
         start_wall_ns_=qpc_ns();
-        auto hr=render_.start(requested_period_ms_);
+        auto hr=render_.start(requested_period_ms_, rate_);
         if(FAILED(hr)){
             render_.stop();
             stop_producer();
@@ -236,6 +240,24 @@ public:
             put_text(error_,"Device mix sample rate changed; reload driver",sizeof(error_));
             return ASE_NoClock;
         }
+        // Observe endpoint hotplug/default changes and panel selection on a separate
+        // control thread. Never create/destroy WASAPI clients in the ASIO callback.
+        monitor_stop_event_=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        if(!monitor_stop_event_){
+            render_.stop();
+            stop_producer();
+            playing_.store(false,std::memory_order_release);
+            return ASE_NoMemory;
+        }
+        try {monitor_thread_=std::thread([this]{monitor_loop();});}
+        catch(...){
+            CloseHandle(monitor_stop_event_);
+            monitor_stop_event_=nullptr;
+            render_.stop();
+            stop_producer();
+            playing_.store(false,std::memory_order_release);
+            return ASE_NoMemory;
+        }
         // Wake DSP producer for the next render event.
         if(producer_wake_event_)SetEvent(producer_wake_event_);
         return ASE_OK;
@@ -247,6 +269,7 @@ public:
             producer_thread_.get_id()==std::this_thread::get_id()))
             return ASE_InvalidMode;
         const bool was_playing=playing_.load(std::memory_order_acquire);
+        stop_monitor();
         render_.stop();
         stop_producer();
         playing_.store(false,std::memory_order_release);
@@ -333,7 +356,11 @@ public:
         for(auto& pair:planar_)for(auto& v:pair)v.clear();
         return ASE_OK;
     }
-    ASIOError controlPanel() override {return ASE_NotPresent;}
+    ASIOError controlPanel() override {
+        // A settings change is persisted here; monitor_loop reopens WASAPI.
+        // ASIO host callbacks, buffers and sample position stay intact.
+        return modern_asio::show_output_device_panel(nullptr)?ASE_OK:ASE_HWMalfunction;
+    }
     ASIOError future(long,void*) override {return ASE_NotPresent;}
     ASIOError outputReady() override {
         // ASIOOutputReady optimization is NOT implemented. The driver copies
@@ -344,6 +371,40 @@ public:
         return ASE_NotPresent;
     }
 private:
+    void stop_monitor() noexcept {
+        if(monitor_stop_event_)SetEvent(monitor_stop_event_);
+        if(monitor_thread_.joinable())monitor_thread_.join();
+        if(monitor_stop_event_){
+            CloseHandle(monitor_stop_event_);
+            monitor_stop_event_=nullptr;
+        }
+    }
+    void monitor_loop() noexcept {
+        const HRESULT com=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
+        if(FAILED(com) && com!=RPC_E_CHANGED_MODE)return;
+        ComPtr<IMMDeviceEnumerator> enumerator;
+        if(SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,
+                CLSCTX_INPROC_SERVER,IID_PPV_ARGS(enumerator.GetAddressOf())))) {
+            while(WaitForSingleObject(monitor_stop_event_,300)==WAIT_TIMEOUT) {
+                ComPtr<IMMDevice> effective;
+                std::wstring id;
+                const auto resolved=modern_asio::resolve_output_endpoint(
+                    enumerator.Get(),effective.GetAddressOf(),id,rate_);
+                if(FAILED(resolved))continue; // No compatible active device yet.
+                if(id==render_.opened_output_id() && render_.stream_running())continue;
+                // This worker owns reconfiguration; ASIO callback thread is not stopped.
+                render_.stop();
+                const auto restarted=render_.start(requested_period_ms_,rate_);
+                if(FAILED(restarted)) {
+                    // Device could disappear between resolution and activation.
+                    // Retry on the next poll, including after USB/Bluetooth reconnect.
+                    continue;
+                }
+                if(producer_wake_event_)SetEvent(producer_wake_event_);
+            }
+        }
+        if(SUCCEEDED(com))CoUninitialize();
+    }
     static bool request_audio(void* raw) noexcept {
         // Only signals the worker; no host DSP on WASAPI render thread.
         auto* self=static_cast<Driver*>(raw);
@@ -615,6 +676,8 @@ private:
     HANDLE producer_stop_event_{nullptr};
     HANDLE producer_wake_event_{nullptr};
     std::thread producer_thread_;
+    HANDLE monitor_stop_event_{nullptr};
+    std::thread monitor_thread_;
     std::atomic<bool> playing_{false};
     long buffer_index_{0};
     std::atomic<std::uint64_t> callback_errors_{0};

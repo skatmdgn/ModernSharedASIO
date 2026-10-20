@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <thread>
 #include "modern_asio/spsc_stereo_ring.hpp"
 #include "modern_asio/engine_demand.hpp"
@@ -68,17 +69,21 @@ public:
 
     // target_period_ms=0 selects Windows default; 3 or 5 requests a smaller period.
     // NEVER acquires WASAPI exclusive mode.
-    HRESULT start(std::uint32_t target_period_ms = 0);
+    HRESULT start(std::uint32_t target_period_ms = 0,
+                  std::uint32_t expected_sample_rate = 0);
     void stop() noexcept;
     // Only the render worker calls the source; never call stop() from this thread.
     bool on_render_thread() const noexcept;
+    bool stream_running() const noexcept { return stream_running_.load(std::memory_order_acquire); }
+    std::wstring opened_output_id() const;
     OutputInfo device_info() const noexcept;
     OutputStats stats() const noexcept;
     bool read_clock_observation(ClockObservation& out) const noexcept;
 
 private:
-    void thread_main(std::uint32_t period_ms) noexcept;
-    void publish_initialized(HRESULT hr, OutputInfo info = {}) noexcept;
+    void thread_main(std::uint32_t period_ms, std::uint32_t expected_sample_rate) noexcept;
+    void publish_initialized(HRESULT hr, OutputInfo info = {},
+                             const std::wstring& output_id = {}) noexcept;
     SpscStereoRing& queue_;
     AudioRequest source_{nullptr};
     void* source_context_{nullptr};
@@ -91,6 +96,8 @@ private:
     bool ready_{false};
     HRESULT init_result_{E_UNEXPECTED};
     OutputInfo info_{};
+    std::wstring opened_output_id_{};
+    std::atomic<bool> stream_running_{false};
     std::atomic<std::uint64_t> render_events_{0};
     std::atomic<std::uint64_t> underrun_frames_{0};
     std::atomic<std::uint64_t> errors_{0};

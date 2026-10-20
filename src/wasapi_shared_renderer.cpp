@@ -9,6 +9,7 @@
 #include "modern_asio/period_policy.hpp"
 #include "modern_asio/engine_demand.hpp"
 #include "modern_asio/float32_output_transfer.hpp"
+#include "modern_asio/output_endpoint.hpp"
 #include <audioclient.h>
 #include <avrt.h>
 #include <cmath>
@@ -121,7 +122,8 @@ void convert(float const* input, BYTE* dst, UINT32 frames, const FormatDesc& f) 
 }
 } // namespace
 
-HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
+HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms,
+                                    std::uint32_t expected_sample_rate) {
     if (target_period_ms > 20) return E_INVALIDARG;
     if (thread_.joinable()) return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
     stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -131,7 +133,9 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
         ready_ = false;
         init_result_ = E_UNEXPECTED;
         info_ = {};
+        opened_output_id_.clear();
     }
+    stream_running_.store(false, std::memory_order_release);
     render_events_.store(0);
     underrun_frames_.store(0);
     errors_.store(0);
@@ -147,7 +151,9 @@ HRESULT WasapiSharedRenderer::start(std::uint32_t target_period_ms) {
     last_stream_hresult_.store(S_OK);
     coherent_clock_.reset_stopped();
     try {
-        thread_ = std::thread([this, target_period_ms] { thread_main(target_period_ms); });
+        thread_ = std::thread([this, target_period_ms, expected_sample_rate] {
+            thread_main(target_period_ms, expected_sample_rate);
+        });
     } catch (...) {
         CloseHandle(stop_event_);
         stop_event_ = nullptr;
@@ -171,6 +177,11 @@ void WasapiSharedRenderer::stop() noexcept {
     if (on_render_thread()) return;
     if (thread_.joinable()) thread_.join();
     if (stop_event_) { CloseHandle(stop_event_); stop_event_ = nullptr; }
+    stream_running_.store(false, std::memory_order_release);
+}
+std::wstring WasapiSharedRenderer::opened_output_id() const {
+    std::lock_guard lock(mutex_);
+    return opened_output_id_;
 }
 OutputInfo WasapiSharedRenderer::device_info() const noexcept {
     std::lock_guard lock(mutex_);
@@ -191,16 +202,19 @@ OutputStats WasapiSharedRenderer::stats() const noexcept {
 bool WasapiSharedRenderer::read_clock_observation(ClockObservation& out) const noexcept {
     return coherent_clock_.read(out);
 }
-void WasapiSharedRenderer::publish_initialized(HRESULT hr, OutputInfo info) noexcept {
+void WasapiSharedRenderer::publish_initialized(HRESULT hr, OutputInfo info,
+                                               const std::wstring& output_id) noexcept {
     {
         std::lock_guard lock(mutex_);
         init_result_ = hr;
         info_ = info;
+        opened_output_id_ = output_id;
         ready_ = true;
     }
     ready_cv_.notify_one();
 }
-void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
+void WasapiSharedRenderer::thread_main(std::uint32_t target_ms,
+                                      std::uint32_t expected_sample_rate) noexcept {
     CoInit com;
     if (FAILED(com.hr)) { publish_initialized(com.hr); return; }
     ComPtr<IMMDeviceEnumerator> devices;
@@ -208,7 +222,9 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
                                   IID_PPV_ARGS(devices.GetAddressOf()));
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ComPtr<IMMDevice> endpoint;
-    hr = devices->GetDefaultAudioEndpoint(eRender, eConsole, endpoint.GetAddressOf());
+    std::wstring output_id;
+    hr = resolve_output_endpoint(devices.Get(), endpoint.GetAddressOf(),
+                                 output_id, expected_sample_rate);
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ComPtr<IAudioClient> client;
     hr = endpoint->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER,
@@ -379,7 +395,8 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
     hr = client->Start();
     if (FAILED(hr)) { publish_initialized(hr); return; }
     ClientStopOwner stop_client{client.Get()};
-    publish_initialized(S_OK, info);
+    stream_running_.store(true, std::memory_order_release);
+    publish_initialized(S_OK, info, output_id);
 
     HANDLE events[2]{stop_event_, audio_event.value};
     for (;;) {
@@ -405,6 +422,7 @@ void WasapiSharedRenderer::thread_main(std::uint32_t target_ms) noexcept {
             break;
         }
     }
+    stream_running_.store(false, std::memory_order_release);
     // Stop and all COM/handle teardown finish before thread exit.
 }
 } // namespace modern_asio
