@@ -44,6 +44,7 @@
 #include "modern_asio/output_device_selector.hpp"
 #include "modern_asio/output_switch_policy.hpp"
 #include "modern_asio/output_switch_transaction.hpp"
+#include "modern_asio/output_device_change_monitor.hpp"
 
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -165,7 +166,7 @@ bool configured_disable_time_info() noexcept {
 class Driver final : public IASIO {
 public:
     Driver():render_(fifo_, &Driver::request_audio, this, kFrames, true),bridge_(fifo_) {g_objects.fetch_add(1);}
-    ~Driver(){stop();g_objects.fetch_sub(1);}
+    ~Driver(){output_monitor_.stop();stop();g_objects.fetch_sub(1);}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,void** ppv) override {
         if(!ppv)return E_POINTER;
         *ppv=nullptr;
@@ -213,6 +214,12 @@ public:
         }
         CoTaskMemFree(fmt);
         if(!initialized_)put_text(error_,"Output device unavailable; connect headset or reset ASIO output selection",sizeof(error_));
+        // Never subscribe on the ASIO realtime thread. COM callbacks only
+        // signal a dedicated control worker; a monitoring failure must not
+        // prevent an otherwise usable ASIO driver from initializing.
+        if(initialized_) {
+            (void)output_monitor_.start([this]() noexcept {on_output_device_notification();});
+        }
         return initialized_?ASIOTrue:ASIOFalse;
     }
     void getDriverName(char* s) override {put_text(s,"Modern Shared Audio",32);}
@@ -389,8 +396,7 @@ public:
         return ASE_OK;
     }
     ASIOError controlPanel() override {
-        // Cubase opens the dialog on a UI/control thread. Never open one from
-        // the ASIO producer or the WASAPI render worker.
+        // Cubase opens its ASIO Control Panel on the host UI thread.
         if(!modern_asio::show_output_device_picker(host_window_))
             return ASE_OK;
         if(render_.on_render_thread() ||
@@ -398,80 +404,40 @@ public:
             producer_thread_.get_id()==std::this_thread::get_id()))
             return ASE_InvalidMode;
 
-        // Save has already updated the preferred Windows endpoint. Resolve
-        // the *actual* active endpoint (including missing-headset fallback).
-        // A running Cubase engine has a fixed negotiated ASIO sample rate.
-        std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
-        if(!initialized_)return ASE_OK;
-        std::wstring next_id;
-        std::uint32_t next_rate=0;
-        bool fallback=false;
-        const auto selection=modern_asio::inspect_selected_output_route(
-            next_id,next_rate,fallback);
-        if(FAILED(selection)) {
-            ++output_device_switch_failures_;
-            MessageBoxW(host_window_ && IsWindow(host_window_)?host_window_:nullptr,
+        // Both explicit Save and hardware notifications use exactly the
+        // same serialized endpoint migration and rollback policy.
+        RouteChangeOutcome outcome;
+        {
+            std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+            outcome=apply_selected_output_route_locked();
+        }
+        const HWND owner=host_window_ && IsWindow(host_window_)?host_window_:nullptr;
+        switch(outcome) {
+        case RouteChangeOutcome::unavailable:
+            MessageBoxW(owner,
                 L"The selected output device is unavailable. The existing output was preserved.",
                 L"Modern Shared Audio",MB_OK|MB_ICONWARNING);
-            return ASE_OK;
-        }
-        const auto decision=modern_asio::decide_output_switch(
-            effective_output_device_id_,next_id,rate_,next_rate);
-        if(decision==modern_asio::OutputSwitchDecision::incompatible_sample_rate) {
-            ++output_device_switch_failures_;
-            // Do not render 44.1kHz ASIO samples into a 48kHz device or vice
-            // versa. User preference remains saved for the NEXT Cubase init.
-            MessageBoxW(host_window_ && IsWindow(host_window_)?host_window_:nullptr,
-                L"New output uses another sample rate. Restart Cubase so ASIO can renegotiate its rate. Current audio output is unchanged.",
+            break;
+        case RouteChangeOutcome::incompatible_rate:
+            MessageBoxW(owner,
+                L"The new output has a different Windows mix sample rate. Restart Cubase to renegotiate ASIO. The current route was preserved.",
                 L"Modern Shared Audio",MB_OK|MB_ICONINFORMATION);
-            return ASE_OK;
-        }
-        if(decision==modern_asio::OutputSwitchDecision::invalid_endpoint) {
-            ++output_device_switch_failures_;
-            return ASE_HWMalfunction;
-        }
-        if(decision==modern_asio::OutputSwitchDecision::same_device) {
-            output_device_fallback_=fallback;
-            return ASE_OK;
-        }
-        // This is an intentional brief stop/reopen of WASAPI on the host
-        // control thread. The separate ASIO producer thread and its SPSC
-        // queue remain alive, preserving Cubase sample positions, A/B buffer
-        // order, and ASIO callbacks. It is NOT gapless hotplug handoff.
-        if(!playing_.load(std::memory_order_acquire)) {
-            effective_output_device_id_=std::move(next_id);
-            output_device_fallback_=fallback;
-            return ASE_OK;
-        }
-
-        const auto old_endpoint=effective_output_device_id_;
-        const auto result=modern_asio::execute_output_switch(next_id,old_endpoint,
-            [&]() {render_.stop();},
-            [&](const std::wstring& selected_id) {
-                if(!render_.set_output_endpoint_id(selected_id))
-                    return false;
-                const auto hr=render_.start(requested_period_ms_);
-                // The ASIO sample rate remains fixed for this Cubase session.
-                return SUCCEEDED(hr) && render_.device_info().sample_rate==rate_;
-            });
-        if(result==modern_asio::OutputSwitchResult::applied) {
-            effective_output_device_id_=std::move(next_id);
-            output_device_fallback_=fallback;
-            ++output_device_switches_;
-            return ASE_OK;
-        }
-        ++output_device_switch_failures_;
-        put_text(error_,"WASAPI hot output switch failed",sizeof(error_));
-        if(result==modern_asio::OutputSwitchResult::restored_previous) {
-            MessageBoxW(host_window_ && IsWindow(host_window_)?host_window_:nullptr,
-                L"Could not open the new output. Restored the previous device. Try reconnecting your headset.",
+            break;
+        case RouteChangeOutcome::restored:
+            MessageBoxW(owner,
+                L"Could not open the new output. Restored the previous device.",
                 L"Modern Shared Audio",MB_OK|MB_ICONWARNING);
-            return ASE_OK;
+            break;
+        case RouteChangeOutcome::no_output:
+            MessageBoxW(owner,
+                L"Neither output could be opened. Check the Windows sound devices, then restart the Cubase audio engine.",
+                L"Modern Shared Audio",MB_OK|MB_ICONERROR);
+            return ASE_HWMalfunction;
+        case RouteChangeOutcome::unchanged:
+        case RouteChangeOutcome::applied:
+            break;
         }
-        MessageBoxW(host_window_ && IsWindow(host_window_)?host_window_:nullptr,
-            L"Both the selected and previous outputs are unavailable. Stop and restart Cubase's audio engine after checking Windows sound devices.",
-            L"Modern Shared Audio",MB_OK|MB_ICONERROR);
-        return ASE_HWMalfunction;
+        return ASE_OK;
     }
     ASIOError future(long,void*) override {return ASE_NotPresent;}
     ASIOError outputReady() override {
@@ -483,6 +449,73 @@ public:
         return ASE_NotPresent;
     }
 private:
+    enum class RouteChangeOutcome {
+        unchanged, applied, unavailable, incompatible_rate, restored, no_output
+    };
+
+    void on_output_device_notification() noexcept {
+        // IMMNotificationClient never touches audio state. Only this worker
+        // can act on a signal, serialized with IASIO start/stop/controlPanel.
+        // Keep COM endpoint enumeration and WASAPI joins off realtime threads.
+        std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+        if(initialized_) (void)apply_selected_output_route_locked();
+    }
+
+    // Requires lifecycle_mutex_. Rate cannot change inside an existing ASIO
+    // session: changing the physical device clock without resampling would
+    // distort playback. The same guard applies while playback is stopped.
+    RouteChangeOutcome apply_selected_output_route_locked() noexcept {
+        if(!initialized_)return RouteChangeOutcome::unchanged;
+        std::wstring selected_id;
+        std::uint32_t selected_rate=0;
+        bool fallback=false;
+        if(FAILED(modern_asio::inspect_selected_output_route(
+                      selected_id,selected_rate,fallback))) {
+            ++output_device_switch_failures_;
+            return RouteChangeOutcome::unavailable;
+        }
+        const auto decision=modern_asio::decide_output_switch(
+            effective_output_device_id_,selected_id,rate_,selected_rate);
+        if(decision==modern_asio::OutputSwitchDecision::incompatible_sample_rate) {
+            ++output_device_switch_failures_;
+            return RouteChangeOutcome::incompatible_rate;
+        }
+        if(decision==modern_asio::OutputSwitchDecision::invalid_endpoint) {
+            ++output_device_switch_failures_;
+            return RouteChangeOutcome::unavailable;
+        }
+        if(decision==modern_asio::OutputSwitchDecision::same_device) {
+            output_device_fallback_=fallback;
+            return RouteChangeOutcome::unchanged;
+        }
+        if(!playing_.load(std::memory_order_acquire)) {
+            effective_output_device_id_=std::move(selected_id);
+            output_device_fallback_=fallback;
+            return RouteChangeOutcome::applied;
+        }
+        // One WASAPI consumer at a time. The original ASIO producer and its
+        // alternating buffer halves continue, including transport timestamps.
+        const auto previous_id=effective_output_device_id_;
+        const auto result=modern_asio::execute_output_switch(selected_id,previous_id,
+            [&]() {render_.stop();},
+            [&](const std::wstring& id) {
+                if(!render_.set_output_endpoint_id(id))return false;
+                const auto hr=render_.start(requested_period_ms_);
+                return SUCCEEDED(hr) && render_.device_info().sample_rate==rate_;
+            });
+        if(result==modern_asio::OutputSwitchResult::applied) {
+            effective_output_device_id_=std::move(selected_id);
+            output_device_fallback_=fallback;
+            ++output_device_switches_;
+            return RouteChangeOutcome::applied;
+        }
+        ++output_device_switch_failures_;
+        put_text(error_,"WASAPI output switch failed",sizeof(error_));
+        return result==modern_asio::OutputSwitchResult::restored_previous
+            ? RouteChangeOutcome::restored
+            : RouteChangeOutcome::no_output;
+    }
+
     static bool request_audio(void* raw) noexcept {
         // Only signals the worker; no host DSP on WASAPI render thread.
         auto* self=static_cast<Driver*>(raw);
@@ -733,6 +766,7 @@ private:
     std::wstring effective_output_device_id_{};
     bool output_device_fallback_{false};
     std::mutex lifecycle_mutex_;
+    modern_asio::OutputDeviceChangeMonitor output_monitor_{};
     std::uint64_t output_device_switches_{0},output_device_switch_failures_{0};
     std::uint32_t requested_period_ms_{5};
     bool scheduler_probe_enabled_{false};
