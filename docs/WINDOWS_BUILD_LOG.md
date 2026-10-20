@@ -185,3 +185,7 @@ Pinned output unplugged on PC reboot caused Cubase ASIO driver load error. Now p
 ## 2026-10-20 headset selection not reflected in sound
 
 After headset selected through settings, user reports Cubase audio still on speakers. Source audit: resolver uses HKCU OutputDeviceId and WASAPI same resolved endpoint; however scripts/build_windows_x64.ps1 only builds/tests, not registers. Added read-only diagnostic PowerShell for registered/built DLL match, last ASIO_STOP fallback and loaded Cubase module, and independent C++ Windows route probe using actual endpoint names. Windows build/tests and run not performed here. No audio-thread/PCM changes. docs/OUTPUT_DEVICE_SELECTION.md.
+
+## 2026-10-20 live WASAPI routing on Cubase Control Panel Save
+
+New feature/output-device-picker branch controlPanel() now inspects selected endpoint ID/mix rate and stops/joins old render worker, starts new device's shared output for same-rate switches without stopping ASIO producer/timeline. Lifecycle lock serializes stop/start/switch; error rollback restores previous. Different mix rate requires Cubase reinit; no silent wrong-rate output. Staged ASIO_STOP output_device_switches/failures and read-only summary. Local Clang+GCC sanitizer portable transaction/policy logic tests PASS. Windows full MSVC build, 29 CTests, registered DLL match and physical Cubase speaker/headset test PENDING. Build does not install. docs/LIVE_OUTPUT_SWITCH.md.

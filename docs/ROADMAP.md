@@ -178,3 +178,7 @@ Disconnected saved headset made Cubase fail ASIO init; now fallback to Windows e
 ### 2026-10-20 route verification without new audio changes
 
 Headset preference visible but Cubase still output speakers. Added standalone route probe and diagnostic PowerShell; build script now warns if registered DLL path differs from newly built DLL. Hypotheses: Cubase's loaded DLL is stale, current engine not restarted, or Windows resolver actually selecting speaker/fallback. No speculation beyond these until on-Windows results. Existing output fallback code and stable main untouched. docs/OUTPUT_DEVICE_SELECTION.md.
+
+### 2026-10-20 manual live playback output routing
+
+Replaced Cubase Control Panel Save-only routing with measured-rate-checked UI-thread transaction to stop old WASAPI consumer and open new headset/speaker without restarting entire DAW; preserves SPSC producer, Cubase opposite-half ASIO 512 and FIFO 1024. Rollback on failure, rate-mismatch guard, lifecycle lock, ASIO_STOP switch counters. Hardware auto plug/unplug still not implemented. New pure switch decision/rollback CTests PASS locally Clang+GCC with sanitizers, Windows total expected 29. Must validate registered DLL path and actual Cubase playback. docs/LIVE_OUTPUT_SWITCH.md.

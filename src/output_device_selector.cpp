@@ -9,6 +9,7 @@
 #include "modern_asio/output_device_selection_policy.hpp"
 #include <Windows.h>
 #include <Objbase.h>
+#include <audioclient.h>
 #include <mmdeviceapi.h>
 #include <propsys.h>
 #include <propvarutil.h>
@@ -136,7 +137,7 @@ void refill_combo(HWND dialog,DialogState& state) {
     }
     SendMessageW(state.combo,CB_SETCURSEL,static_cast<WPARAM>(current),0);
     SetDlgItemTextW(dialog,2103,found
-      ? L"Choose a device and click Save. Close and reopen Cubase to apply."
+      ? L"Save to switch Cubase output. A short mute is possible; a different sample rate needs restart."
       : L"Saved output is offline. Windows default is used now; the saved preference returns on the next driver initialization.");
 }
 INT_PTR CALLBACK picker_proc(HWND dialog,UINT message,WPARAM wp,LPARAM lp) {
@@ -267,6 +268,39 @@ HRESULT resolve_output_endpoint(IMMDeviceEnumerator* enumerator,
             CoTaskMemFree(allocated_id);
         }
         return result;
+    } catch(...) {return E_OUTOFMEMORY;}
+}
+HRESULT inspect_selected_output_route(std::wstring& actual_id,
+                                      std::uint32_t& sample_rate,
+                                      bool& used_fallback) noexcept {
+    actual_id.clear();
+    sample_rate=0;
+    used_fallback=false;
+    try {
+        ComInit com;
+        if(!com.usable())return com.result;
+        ComPtr<IMMDeviceEnumerator> enumerator;
+        HRESULT hr=CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,
+                 CLSCTX_INPROC_SERVER,IID_PPV_ARGS(enumerator.GetAddressOf()));
+        if(FAILED(hr))return hr;
+        ComPtr<IMMDevice> device;
+        hr=resolve_output_endpoint(enumerator.Get(),device.GetAddressOf(),
+                                   &actual_id,&used_fallback);
+        if(FAILED(hr))return hr;
+        ComPtr<IAudioClient> client;
+        hr=device->Activate(__uuidof(IAudioClient),CLSCTX_INPROC_SERVER,
+                  nullptr,reinterpret_cast<void**>(client.GetAddressOf()));
+        if(FAILED(hr))return hr;
+        WAVEFORMATEX* mix=nullptr;
+        hr=client->GetMixFormat(&mix);
+        if(FAILED(hr)){CoTaskMemFree(mix);return hr;}
+        if(!mix)return E_UNEXPECTED;
+        const UINT rate=mix->nSamplesPerSec;
+        const WORD channels=mix->nChannels;
+        CoTaskMemFree(mix);
+        if(channels<2 || rate==0)return AUDCLNT_E_UNSUPPORTED_FORMAT;
+        sample_rate=rate;
+        return S_OK;
     } catch(...) {return E_OUTOFMEMORY;}
 }
 bool show_output_device_picker(HWND host_parent) noexcept {

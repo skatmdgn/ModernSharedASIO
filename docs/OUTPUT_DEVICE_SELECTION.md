@@ -13,7 +13,7 @@ User connected headphones/headset but couldn't select them in Cubase. Source aud
 3. `IASIO::controlPanel()` now opens an actual programmatic Win32 dialog: `Windows default output (automatic)` or any currently connected/active `eRender` device, identified with its friendly name. `Refresh` rescans if a headset is plugged in while the panel is open. `Save` writes only HKCU user setting; `Cancel` makes no changes. No official Steinberg driver/registry setting is touched.
 4. `modern_asio_output_devices.exe` is a Windows GUI launcher for the same selector outside Cubase. It also permits changing a saved preferred Bluetooth/USB endpoint while the device is disconnected; automatic default-output recovery is now built into the ASIO initialization, so manual clearing is normally unnecessary. this executable is built in `build-win\Debug` even with `MSA_BUILD_ASIO_DLL=OFF`.
 5. A **pinned-but-unavailable** endpoint now falls back to the Windows default output during ASIO initialization. Its saved ID remains unchanged, so it is preferred again on the next Cubase startup when connected. If the Windows default also fails, initialization still fails.
-6. No hot reroute during active Cubase playback. New device choice applies after fully closing and restarting Cubase/ASIO driver. Changing hardware mix sample rate may require Cubase project/ASIO reinitialization; the driver still correctly refuses rate mismatch.
+6. Cubase embedded Control Panel now requests a stop/reopen of the WASAPI stream on Save if both endpoints have the same sample rate; a short audible gap is possible. External selector still requires Cubase restart. Changing hardware mix sample rate may require Cubase project/ASIO reinitialization; the driver still correctly refuses rate mismatch.
 
 ## Steps on user's Windows PC
 
@@ -49,7 +49,7 @@ Check both `ASIO_STOP` output under the exact same project, and listen for corre
 
 ## Limits and verification
 
-- The fallback occurs at ASIO initialization. It does **not** implement live WASAPI hot swapping or recovery after removal while a stream is already running, ASIO input devices or simultaneous multiple output devices. It selects exactly one Windows render endpoint on next initialization.
+- The disconnected-device fallback occurs at ASIO initialization. User-driven same-rate WASAPI routing via embedded Control Panel Save is supported by new experimental source; automatic physical device-removal hotplug, ASIO inputs and simultaneous multiple outputs remain unsupported. It selects exactly one Windows render endpoint on next initialization.
 - Pinning a headset does NOT automatically reroute Chrome/system sounds to that headset; browser audio still follows its own Windows routing. Both may play simultaneously if the shared-mode endpoint permits.
 - The updated portable policy tests cover connected preference, missing preferred -> Windows default, reconnected preference, an actual non-availability error, and no available default. Clang AddressSanitizer+UBSan and GCC Release both PASS locally.
 - Complete Windows source (`src/output_device_selector.cpp` and control panel UI) cannot be compiled or interactively verified in this Linux tool environment; user Windows MSVC build, expected 27 CTests and Cubase UI/audio test are **PENDING**. Preserve working `main` and `stable/cubase8-phase2-1024-confirmed` unchanged until user confirms.
@@ -103,3 +103,7 @@ Before the test, fully close Cubase, plug/connect the headset, select it in the 
 If the planned output is the headset but Cubase still uses speakers, check the actual Windows ASIO DLL registered/loaded, selected Cubase ASIO driver, and then perform measured live playback. An older driver using the Windows eConsole default will still send audio to speakers regardless of what a newly built standalone picker displays. Do NOT run register_cubase_test.ps1 blindly: it intentionally refuses to overwrite an existing experimental registration. Never overwrite or unregister the original Steinberg driver. Manual re-registration (only for the project's own ModernSharedASIO GUID) is an explicit operator action after inspecting the current registry and backing it up.
 
 **Safety:** no code change to ASIO PCM, FIFO, MMCSS, endpoint resolution, default fallback or ASIO buffer ordering. This addition is diagnostic only. Windows MSVC compiler, COM registration, PowerShell execution and Cubase audible headset verification are NOT possible in the current tool environment; all need Windows execution. No claim that endpoint routing is fixed without results.
+
+## 2026-10-20 live output routing from embedded Cubase control panel
+
+See [docs/LIVE_OUTPUT_SWITCH.md](LIVE_OUTPUT_SWITCH.md). The old Save-only registry behavior is replaced by a control-thread WASAPI stop/join/reopen transaction when Cubase's own ASIO Control Panel invokes Save. New endpoint sample rate must match Cubase's ASIO rate; previous stream is restored if a new endpoint cannot open. Registration mismatch can still make Cubase use an older DLL. Two additional portable CTests; expected Windows count 29. Windows/MSVC and Cubase hardware not verified.

@@ -179,3 +179,7 @@ The feature/output-device-picker branch now automatically uses Windows default o
 ### Output-route diagnosis when picker says headset but speakers play
 
 The new read-only `scripts/diagnose_output_route.ps1` checks registered vs build DLL paths/hashes and whether the last ASIO_STOP supports output-device fallback telemetry. The new Windows console `modern_asio_output_route_probe.exe` reports the friendly name Windows would choose for ModernSharedASIO at this moment, using the exact same resolver as the driver; it does not change sound or registry. Build script warns if the registered DLL differs, because compilation itself does NOT install an ASIO driver. Run diagnostics before changing source DSP or increasing latency. See docs/OUTPUT_DEVICE_SELECTION.md.
+
+### Cubase-embedded live output switching (experimental, 2026-10-20)
+
+ModernSharedASIO Control Panel Save attempts to move the **actual** WASAPI render stream between same-rate speakers/headset without quitting Cubase; stop/join/reopen performed on the host UI/control thread while leaving ASIO callback producer/timeline intact. A brief mute is expected, not guaranteed gapless. Rate mismatch keeps existing output and requires Cubase restart; failed switch attempts restore previous stream. Standalone picker remains save-only. Added two portable CTests and logs `output_device_switches`, `output_device_switch_failures`, expected Windows suite 29. Ensure Cubase actually loads updated registered DLL; a build alone does not install. See docs/LIVE_OUTPUT_SWITCH.md.

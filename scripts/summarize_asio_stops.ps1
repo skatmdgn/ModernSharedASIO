@@ -41,6 +41,8 @@ foreach($line in $lines) {
         EarlyWake = $wake
         SchedulerProbe = $probe
         OutputFallback = if($fields.ContainsKey('output_device_fallback')) { $fields['output_device_fallback'] } else { '-' }
+        DeviceSwitches = (Get-Number $fields 'output_device_switches')
+        DeviceSwitchErrors = (Get-Number $fields 'output_device_switch_failures')
         DirectPct = if($total -gt 0) { [math]::Round(100.0*[double](Get-Number $fields 'native_direct_frames')/[double]$total,2) } else { 0 }
     }
 }
