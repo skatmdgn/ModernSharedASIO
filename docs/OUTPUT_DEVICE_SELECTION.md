@@ -84,3 +84,22 @@ To inspect the DLL Cubase has registered (build does NOT automatically install/r
 (Get-Item 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{6FA63F59-A581-4D9A-B8CB-73C3BD3A6D46}\InprocServer32').GetValue('')
 ```
 Never overwrite or unregister the original Steinberg ASIO driver.
+
+## 2026-10-20: Output picker saves selection but sound remains on speakers
+
+**User symptom:** Picker appears to select the headset, but Cubase still plays on speakers. The Windows route selection source has been verified to query the saved endpoint ID and to pass the resolved effective endpoint to both IASIO init and WASAPI start. However, the project build script only **compiles and runs tests**; it does not **register/install** the experimental DLL or change the HKLM COM InprocServer32 registry path. Therefore a successful build, or an external device picker showing a saved ID, does NOT establish that Cubase is running the just-built driver.
+
+**New read-only diagnosis:** `scripts/diagnose_output_route.ps1` prints expected built DLL, registered DLL, whether paths or hashes match, selected-output presence (but never raw device ID), optional loaded Cubase module path, and last ASIO_STOP `output_device_fallback` / audio info. Build script also prints a warning if the registered DLL differs. `modern_asio_output_route_probe.exe` queries Windows endpoint APIs using the same resolver as the driver to show friendly name of current Windows default and **planned ModernSharedASIO output**, and whether an offline saved headphone was replaced by default. It does not transmit anything, touch registry, or playback audio. This **cannot prove where an older loaded Cubase DLL is actually rendering**; correlate with actual registered/loaded DLL and audio playback evidence.
+
+Run after rebuilding `feature/output-device-picker`:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\scripts\diagnose_output_route.ps1" -Configuration Debug
+& ".\build-win\Debug\modern_asio_output_route_probe.exe"
+```
+
+Before the test, fully close Cubase, plug/connect the headset, select it in the panel, save, then **fully restart Cubase**. The output preference persists but current audio engine does not hot switch. Compare planned output friendly name to intended stereo headset device (not its microphone/capture endpoint, an unrelated 'hands-free' endpoint, or built-in speakers).
+
+If the planned output is the headset but Cubase still uses speakers, check the actual Windows ASIO DLL registered/loaded, selected Cubase ASIO driver, and then perform measured live playback. An older driver using the Windows eConsole default will still send audio to speakers regardless of what a newly built standalone picker displays. Do NOT run register_cubase_test.ps1 blindly: it intentionally refuses to overwrite an existing experimental registration. Never overwrite or unregister the original Steinberg driver. Manual re-registration (only for the project's own ModernSharedASIO GUID) is an explicit operator action after inspecting the current registry and backing it up.
+
+**Safety:** no code change to ASIO PCM, FIFO, MMCSS, endpoint resolution, default fallback or ASIO buffer ordering. This addition is diagnostic only. Windows MSVC compiler, COM registration, PowerShell execution and Cubase audible headset verification are NOT possible in the current tool environment; all need Windows execution. No claim that endpoint routing is fixed without results.

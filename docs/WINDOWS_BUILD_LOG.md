@@ -181,3 +181,7 @@ Branch feature/output-device-picker exposes IASIO controlPanel device chooser fo
 ## 2026-10-20 disconnected headphone recovery
 
 Pinned output unplugged on PC reboot caused Cubase ASIO driver load error. Now preferred missing/inactive falls back to Windows default in IASIO init without altering HKCU saved preference; effective endpoint ID is passed to WASAPI worker so both threads use same device. Add output_device_fallback=1 to ASIO_STOP and log summary. Portable Clang ASan+UBSan / GCC Release policy test PASS; complete Windows CTest 27 and Cubase actual reboot NOT VERIFIED. docs/OUTPUT_DEVICE_SELECTION.md.
+
+## 2026-10-20 headset selection not reflected in sound
+
+After headset selected through settings, user reports Cubase audio still on speakers. Source audit: resolver uses HKCU OutputDeviceId and WASAPI same resolved endpoint; however scripts/build_windows_x64.ps1 only builds/tests, not registers. Added read-only diagnostic PowerShell for registered/built DLL match, last ASIO_STOP fallback and loaded Cubase module, and independent C++ Windows route probe using actual endpoint names. Windows build/tests and run not performed here. No audio-thread/PCM changes. docs/OUTPUT_DEVICE_SELECTION.md.

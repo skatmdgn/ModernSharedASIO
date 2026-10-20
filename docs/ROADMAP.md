@@ -174,3 +174,7 @@ User reported inability to select newly connected headsets. Source only used Get
 ### 2026-10-20 headset reboot failover fix (feature branch)
 
 Disconnected saved headset made Cubase fail ASIO init; now fallback to Windows eConsole default when pinned device missing/inactive. Persist headset preference across fallback and restore on next Cubase initialization after replug. Pin effective output device ID for renderer and report output_device_fallback. Portable tests pass, Win32/27 CTests and Cubase reboot tests pending. No runtime hot-switch promised. docs/OUTPUT_DEVICE_SELECTION.md.
+
+### 2026-10-20 route verification without new audio changes
+
+Headset preference visible but Cubase still output speakers. Added standalone route probe and diagnostic PowerShell; build script now warns if registered DLL path differs from newly built DLL. Hypotheses: Cubase's loaded DLL is stale, current engine not restarted, or Windows resolver actually selecting speaker/fallback. No speculation beyond these until on-Windows results. Existing output fallback code and stable main untouched. docs/OUTPUT_DEVICE_SELECTION.md.

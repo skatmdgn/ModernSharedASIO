@@ -175,3 +175,7 @@ On `feature/output-device-picker`, Cubase IASIO Control Panel can enumerate acti
 ### Disconnected headset recovery on startup (2026-10-20)
 
 The feature/output-device-picker branch now automatically uses Windows default output when the saved preferred headset is absent at ASIO initialization, retaining its saved ID for next Cubase restart after reconnection. IASIO rate discovery and WASAPI playback pin the same effective IMMDevice ID. New ASIO_STOP output_device_fallback field, portable Clang sanitizer and GCC Release policy tests PASS, full MSVC/Cubase still pending. No live hot swap. docs/OUTPUT_DEVICE_SELECTION.md.
+
+### Output-route diagnosis when picker says headset but speakers play
+
+The new read-only `scripts/diagnose_output_route.ps1` checks registered vs build DLL paths/hashes and whether the last ASIO_STOP supports output-device fallback telemetry. The new Windows console `modern_asio_output_route_probe.exe` reports the friendly name Windows would choose for ModernSharedASIO at this moment, using the exact same resolver as the driver; it does not change sound or registry. Build script warns if the registered DLL differs, because compilation itself does NOT install an ASIO driver. Run diagnostics before changing source DSP or increasing latency. See docs/OUTPUT_DEVICE_SELECTION.md.
