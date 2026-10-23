@@ -76,3 +76,4 @@ int wmain() {
     if(uninit)CoUninitialize();
     return FAILED(hr)?3:0;
 }
+#endif // _WIN32
