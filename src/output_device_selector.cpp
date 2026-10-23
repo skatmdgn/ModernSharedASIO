@@ -155,11 +155,11 @@ INT_PTR CALLBACK picker_proc(HWND dialog,UINT message,WPARAM wp,LPARAM lp) {
         set_font(label);
         state->combo=CreateWindowExW(0,L"COMBOBOX",L"",
              WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|CBS_DROPDOWNLIST,
-             left,37,usable-92,240,dialog,reinterpret_cast<HMENU>(kDeviceList),nullptr,nullptr);
+             left,37,usable-92,240,dialog,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kDeviceList)),nullptr,nullptr);
         set_font(state->combo);
         HWND refresh=CreateWindowExW(0,L"BUTTON",L"Refresh",
              WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-             width-92,37,78,25,dialog,reinterpret_cast<HMENU>(kRefresh),nullptr,nullptr);
+             width-92,37,78,25,dialog,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRefresh)),nullptr,nullptr);
         set_font(refresh);
         HWND help=CreateWindowExW(0,L"STATIC",L"",
              WS_CHILD|WS_VISIBLE,left,75,usable,37,dialog,

@@ -1,6 +1,6 @@
 LIBRARY ModernSharedASIO
 EXPORTS
-    DllGetClassObject
-    DllCanUnloadNow
-    DllRegisterServer
-    DllUnregisterServer
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE
+    DllRegisterServer PRIVATE
+    DllUnregisterServer PRIVATE
